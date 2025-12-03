@@ -16,41 +16,96 @@ class CajaController extends Controller
 
     public function store(Request $request)
     {
-        $request->validate([
-            'sucursal_id' => 'required|exists:sucursales,id',
-            'user_id' => 'required|exists:users,id',
-            'fecha_apertura' => 'required|date',
-            'fecha_cierre' => 'nullable|date',
-            'saldo_inicial' => 'required|numeric',
-            'depositos' => 'nullable|numeric',
-            'salidas' => 'nullable|numeric',
-            'ventas' => 'nullable|numeric',
-            'ventas_contado' => 'nullable|numeric',
-            'ventas_credito' => 'nullable|numeric',
-            'pagos_efectivo' => 'nullable|numeric',
-            'pagos_qr' => 'nullable|numeric',
-            'pagos_transferencia' => 'nullable|numeric',
-            'cuotas_ventas_credito' => 'nullable|numeric',
-            'compras_contado' => 'nullable|numeric',
-            'compras_credito' => 'nullable|numeric',
-            'saldo_faltante' => 'nullable|numeric',
-            'saldo_caja' => 'nullable|numeric',
-            'estado' => 'boolean',
-        ]);
+        try {
+            $request->validate([
+                'sucursal_id' => 'required|exists:sucursales,id',
+                'user_id' => 'required|exists:users,id',
+                'fecha_apertura' => 'required|date',
+                'fecha_cierre' => 'nullable|date',
+                'saldo_inicial' => 'required|numeric',
+                'depositos' => 'nullable|numeric',
+                'salidas' => 'nullable|numeric',
+                'ventas' => 'nullable|numeric',
+                'ventas_contado' => 'nullable|numeric',
+                'ventas_credito' => 'nullable|numeric',
+                'pagos_efectivo' => 'nullable|numeric',
+                'pagos_qr' => 'nullable|numeric',
+                'pagos_transferencia' => 'nullable|numeric',
+                'cuotas_ventas_credito' => 'nullable|numeric',
+                'compras_contado' => 'nullable|numeric',
+                'compras_credito' => 'nullable|numeric',
+                'saldo_faltante' => 'nullable|numeric',
+                'saldo_caja' => 'nullable|numeric',
+                'estado' => 'boolean',
+            ], [
+                'sucursal_id.required' => 'La sucursal es obligatoria.',
+                'sucursal_id.exists' => 'La sucursal seleccionada no existe.',
+                'user_id.required' => 'El usuario es obligatorio.',
+                'user_id.exists' => 'El usuario seleccionado no existe.',
+                'fecha_apertura.required' => 'La fecha de apertura es obligatoria.',
+                'fecha_apertura.date' => 'La fecha de apertura debe ser una fecha válida.',
+                'fecha_cierre.date' => 'La fecha de cierre debe ser una fecha válida.',
+                'saldo_inicial.required' => 'El saldo inicial es obligatorio.',
+                'saldo_inicial.numeric' => 'El saldo inicial debe ser un número.',
+                'depositos.numeric' => 'Los depósitos deben ser un número.',
+                'salidas.numeric' => 'Las salidas deben ser un número.',
+                'ventas.numeric' => 'Las ventas deben ser un número.',
+                'ventas_contado.numeric' => 'Las ventas al contado deben ser un número.',
+                'ventas_credito.numeric' => 'Las ventas a crédito deben ser un número.',
+                'pagos_efectivo.numeric' => 'Los pagos en efectivo deben ser un número.',
+                'pagos_qr.numeric' => 'Los pagos QR deben ser un número.',
+                'pagos_transferencia.numeric' => 'Los pagos por transferencia deben ser un número.',
+                'cuotas_ventas_credito.numeric' => 'Las cuotas de ventas a crédito deben ser un número.',
+                'compras_contado.numeric' => 'Las compras al contado deben ser un número.',
+                'compras_credito.numeric' => 'Las compras a crédito deben ser un número.',
+                'saldo_faltante.numeric' => 'El saldo faltante debe ser un número.',
+                'saldo_caja.numeric' => 'El saldo de caja debe ser un número.',
+                'estado.boolean' => 'El estado debe ser verdadero o falso.',
+            ]);
 
-        $caja = Caja::create($request->all());
+            $caja = Caja::create($request->all());
+            $caja->load(['sucursal', 'user']);
 
-        return response()->json($caja, 201);
+            return response()->json($caja, 201);
+        } catch (\Illuminate\Validation\ValidationException $e) {
+            return response()->json([
+                'message' => 'Error de validación',
+                'errors' => $e->errors()
+            ], 422);
+        } catch (\Exception $e) {
+            return response()->json([
+                'message' => 'Error al crear la caja',
+                'error' => $e->getMessage()
+            ], 500);
+        }
     }
 
-    public function show(Caja $caja)
+    public function show($id)
     {
+        $caja = Caja::find($id);
+        
+        if (!$caja) {
+            return response()->json([
+                'message' => 'Caja no encontrada',
+                'error' => "No se encontró una caja con el ID: {$id}"
+            ], 404);
+        }
+        
         $caja->load(['sucursal', 'user']);
         return response()->json($caja);
     }
 
-    public function update(Request $request, Caja $caja)
+    public function update(Request $request, $id)
     {
+        $caja = Caja::find($id);
+        
+        if (!$caja) {
+            return response()->json([
+                'message' => 'Caja no encontrada',
+                'error' => "No se encontró una caja con el ID: {$id}"
+            ], 404);
+        }
+        
         $request->validate([
             'sucursal_id' => 'required|exists:sucursales,id',
             'user_id' => 'required|exists:users,id',
@@ -71,6 +126,30 @@ class CajaController extends Controller
             'saldo_faltante' => 'nullable|numeric',
             'saldo_caja' => 'nullable|numeric',
             'estado' => 'boolean',
+        ], [
+            'sucursal_id.required' => 'La sucursal es obligatoria.',
+            'sucursal_id.exists' => 'La sucursal seleccionada no existe.',
+            'user_id.required' => 'El usuario es obligatorio.',
+            'user_id.exists' => 'El usuario seleccionado no existe.',
+            'fecha_apertura.required' => 'La fecha de apertura es obligatoria.',
+            'fecha_apertura.date' => 'La fecha de apertura debe ser una fecha válida.',
+            'fecha_cierre.date' => 'La fecha de cierre debe ser una fecha válida.',
+            'saldo_inicial.required' => 'El saldo inicial es obligatorio.',
+            'saldo_inicial.numeric' => 'El saldo inicial debe ser un número.',
+            'depositos.numeric' => 'Los depósitos deben ser un número.',
+            'salidas.numeric' => 'Las salidas deben ser un número.',
+            'ventas.numeric' => 'Las ventas deben ser un número.',
+            'ventas_contado.numeric' => 'Las ventas al contado deben ser un número.',
+            'ventas_credito.numeric' => 'Las ventas a crédito deben ser un número.',
+            'pagos_efectivo.numeric' => 'Los pagos en efectivo deben ser un número.',
+            'pagos_qr.numeric' => 'Los pagos QR deben ser un número.',
+            'pagos_transferencia.numeric' => 'Los pagos por transferencia deben ser un número.',
+            'cuotas_ventas_credito.numeric' => 'Las cuotas de ventas a crédito deben ser un número.',
+            'compras_contado.numeric' => 'Las compras al contado deben ser un número.',
+            'compras_credito.numeric' => 'Las compras a crédito deben ser un número.',
+            'saldo_faltante.numeric' => 'El saldo faltante debe ser un número.',
+            'saldo_caja.numeric' => 'El saldo de caja debe ser un número.',
+            'estado.boolean' => 'El estado debe ser verdadero o falso.',
         ]);
 
         $caja->update($request->all());
@@ -78,8 +157,17 @@ class CajaController extends Controller
         return response()->json($caja);
     }
 
-    public function destroy(Caja $caja)
+    public function destroy($id)
     {
+        $caja = Caja::find($id);
+        
+        if (!$caja) {
+            return response()->json([
+                'message' => 'Caja no encontrada',
+                'error' => "No se encontró una caja con el ID: {$id}"
+            ], 404);
+        }
+        
         $caja->delete();
         return response()->json(null, 204);
     }
