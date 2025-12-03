@@ -27,15 +27,27 @@ class RolController extends Controller
         return response()->json($rol, 201);
     }
 
-    public function show(Rol $rol)
+    public function show($id)
     {
+        $rol = Rol::find($id);
+        
+        if (!$rol) {
+            return response()->json(['error' => 'Rol no encontrado'], 404);
+        }
+        
         return response()->json($rol);
     }
 
-    public function update(Request $request, Rol $rol)
+    public function update(Request $request, $id)
     {
+        $rol = Rol::find($id);
+        
+        if (!$rol) {
+            return response()->json(['error' => 'Rol no encontrado'], 404);
+        }
+
         $request->validate([
-            'nombre' => 'required|string|max:50|unique:roles,nombre,' . $rol->id,
+            'nombre' => 'required|string|max:50|unique:roles,nombre,' . $id,
             'descripcion' => 'nullable|string|max:255',
             'estado' => 'boolean',
         ]);
@@ -45,8 +57,14 @@ class RolController extends Controller
         return response()->json($rol);
     }
 
-    public function destroy(Rol $rol)
+    public function destroy($id)
     {
+        $rol = Rol::find($id);
+        
+        if (!$rol) {
+            return response()->json(['error' => 'Rol no encontrado'], 404);
+        }
+        
         $rol->delete();
         return response()->json(null, 204);
     }

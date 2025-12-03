@@ -33,18 +33,29 @@ class SucursalController extends Controller
         return response()->json($sucursal, 201);
     }
 
-    public function show(Sucursal $sucursal)
+    public function show($id)
     {
-        $sucursal->load('empresa');
+        $sucursal = Sucursal::with('empresa')->find($id);
+        
+        if (!$sucursal) {
+            return response()->json(['error' => 'Sucursal no encontrada'], 404);
+        }
+        
         return response()->json($sucursal);
     }
 
-    public function update(Request $request, Sucursal $sucursal)
+    public function update(Request $request, $id)
     {
+        $sucursal = Sucursal::find($id);
+        
+        if (!$sucursal) {
+            return response()->json(['error' => 'Sucursal no encontrada'], 404);
+        }
+
         $request->validate([
             'empresa_id' => 'required|exists:empresas,id',
             'nombre' => 'required|string|max:255',
-            'codigoSucursal' => 'required|string|max:50|unique:sucursales,codigoSucursal,' . $sucursal->id,
+            'codigoSucursal' => 'required|string|max:50|unique:sucursales,codigoSucursal,' . $id,
             'direccion' => 'nullable|string|max:255',
             'correo' => 'nullable|email|max:255',
             'telefono' => 'nullable|string|max:20',
@@ -55,11 +66,17 @@ class SucursalController extends Controller
 
         $sucursal->update($request->all());
 
-        return response()->json($sucursal);
+        return response()->json(Sucursal::with('empresa')->find($id));
     }
 
-    public function destroy(Sucursal $sucursal)
+    public function destroy($id)
     {
+        $sucursal = Sucursal::find($id);
+        
+        if (!$sucursal) {
+            return response()->json(['error' => 'Sucursal no encontrada'], 404);
+        }
+        
         $sucursal->delete();
         return response()->json(null, 204);
     }

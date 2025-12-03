@@ -18,8 +18,9 @@ class AlmacenController extends Controller
     {
         $request->validate([
             'sucursal_id' => 'required|exists:sucursales,id',
-            'nombre' => 'required|string|max:255',
-            'ubicacion' => 'nullable|string|max:255',
+            'nombre_almacen' => 'required|string|max:100',
+            'ubicacion' => 'nullable|string|max:191',
+            'telefono' => 'nullable|string|max:191',
             'estado' => 'boolean',
         ]);
 
@@ -37,9 +38,10 @@ class AlmacenController extends Controller
     public function update(Request $request, Almacen $almacen)
     {
         $request->validate([
-            'sucursal_id' => 'required|exists:sucursales,id',
-            'nombre' => 'required|string|max:255',
-            'ubicacion' => 'nullable|string|max:255',
+            'sucursal_id' => 'sometimes|required|exists:sucursales,id',
+            'nombre_almacen' => 'sometimes|required|string|max:100',
+            'ubicacion' => 'nullable|string|max:191',
+            'telefono' => 'nullable|string|max:191',
             'estado' => 'boolean',
         ]);
 

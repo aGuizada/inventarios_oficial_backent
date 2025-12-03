@@ -21,34 +21,50 @@ class ArticuloController extends Controller
             'categoria_id' => 'required|exists:categorias,id',
             'proveedor_id' => 'required|exists:proveedores,id',
             'medida_id' => 'required|exists:medidas,id',
-            'marca_id' => 'nullable|exists:marcas,id',
-            'industria_id' => 'nullable|exists:industrias,id',
-            'codigo' => 'required|string|max:50|unique:articulos',
+            'marca_id' => 'required|exists:marcas,id',
+            'industria_id' => 'required|exists:industrias,id',
+            'codigo' => 'required|string|max:255|unique:articulos',
             'nombre' => 'required|string|max:255',
-            'descripcion' => 'nullable|string',
-            'precio_compra' => 'required|numeric',
+            'unidad_envase' => 'required|integer',
+            'precio_costo_unid' => 'required|numeric',
+            'precio_costo_paq' => 'required|numeric',
             'precio_venta' => 'required|numeric',
-            'stock_minimo' => 'nullable|integer',
-            'stock_maximo' => 'nullable|integer',
-            'foto' => 'nullable|image|mimes:jpeg,png,jpg,gif|max:2048',
+            'precio_uno' => 'nullable|numeric',
+            'precio_dos' => 'nullable|numeric',
+            'precio_tres' => 'nullable|numeric',
+            'precio_cuatro' => 'nullable|numeric',
+            'stock' => 'required|integer',
+            'descripcion' => 'nullable|string|max:256',
+            'costo_compra' => 'required|numeric',
+            'vencimiento' => 'nullable|integer',
+            'fotografia' => 'nullable|image|mimes:jpeg,png,jpg,gif|max:2048',
             'estado' => 'boolean',
         ]);
 
         $data = $request->all();
 
-        if ($request->hasFile('foto')) {
-            $path = $request->file('foto')->store('articulos', 'public');
-            $data['foto'] = $path;
+        if ($request->hasFile('fotografia')) {
+            $path = $request->file('fotografia')->store('articulos', 'public');
+            $data['fotografia'] = $path;
         }
 
         $articulo = Articulo::create($data);
+        $articulo->load(['categoria', 'proveedor', 'medida', 'marca', 'industria']);
 
         return response()->json($articulo, 201);
     }
 
-    public function show(Articulo $articulo)
+    public function show($id)
     {
-        $articulo->load(['categoria', 'proveedor', 'medida', 'marca', 'industria']);
+        $articulo = Articulo::with(['categoria', 'proveedor', 'medida', 'marca', 'industria'])->find($id);
+        
+        if (!$articulo) {
+            return response()->json([
+                'message' => 'Artículo no encontrado',
+                'error' => "No se encontró un artículo con el ID: {$id}"
+            ], 404);
+        }
+        
         return response()->json($articulo);
     }
 
@@ -58,38 +74,46 @@ class ArticuloController extends Controller
             'categoria_id' => 'required|exists:categorias,id',
             'proveedor_id' => 'required|exists:proveedores,id',
             'medida_id' => 'required|exists:medidas,id',
-            'marca_id' => 'nullable|exists:marcas,id',
-            'industria_id' => 'nullable|exists:industrias,id',
-            'codigo' => 'required|string|max:50|unique:articulos,codigo,' . $articulo->id,
+            'marca_id' => 'required|exists:marcas,id',
+            'industria_id' => 'required|exists:industrias,id',
+            'codigo' => 'required|string|max:255|unique:articulos,codigo,' . $articulo->id,
             'nombre' => 'required|string|max:255',
-            'descripcion' => 'nullable|string',
-            'precio_compra' => 'required|numeric',
+            'unidad_envase' => 'required|integer',
+            'precio_costo_unid' => 'required|numeric',
+            'precio_costo_paq' => 'required|numeric',
             'precio_venta' => 'required|numeric',
-            'stock_minimo' => 'nullable|integer',
-            'stock_maximo' => 'nullable|integer',
-            'foto' => 'nullable|image|mimes:jpeg,png,jpg,gif|max:2048',
+            'precio_uno' => 'nullable|numeric',
+            'precio_dos' => 'nullable|numeric',
+            'precio_tres' => 'nullable|numeric',
+            'precio_cuatro' => 'nullable|numeric',
+            'stock' => 'required|integer',
+            'descripcion' => 'nullable|string|max:256',
+            'costo_compra' => 'required|numeric',
+            'vencimiento' => 'nullable|integer',
+            'fotografia' => 'nullable|image|mimes:jpeg,png,jpg,gif|max:2048',
             'estado' => 'boolean',
         ]);
 
         $data = $request->all();
 
-        if ($request->hasFile('foto')) {
-            if ($articulo->foto) {
-                Storage::disk('public')->delete($articulo->foto);
+        if ($request->hasFile('fotografia')) {
+            if ($articulo->fotografia) {
+                Storage::disk('public')->delete($articulo->fotografia);
             }
-            $path = $request->file('foto')->store('articulos', 'public');
-            $data['foto'] = $path;
+            $path = $request->file('fotografia')->store('articulos', 'public');
+            $data['fotografia'] = $path;
         }
 
         $articulo->update($data);
+        $articulo->load(['categoria', 'proveedor', 'medida', 'marca', 'industria']);
 
         return response()->json($articulo);
     }
 
     public function destroy(Articulo $articulo)
     {
-        if ($articulo->foto) {
-            Storage::disk('public')->delete($articulo->foto);
+        if ($articulo->fotografia) {
+            Storage::disk('public')->delete($articulo->fotografia);
         }
         $articulo->delete();
         return response()->json(null, 204);
