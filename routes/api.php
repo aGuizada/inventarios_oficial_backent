@@ -140,6 +140,7 @@ Route::prefix('auth')->group(function () {
     Route::apiResource('traspasos', TraspasoController::class);
 
     // Ventas
+    Route::get('ventas/productos-inventario', [VentaController::class, 'productosInventario']);
     Route::apiResource('ventas', VentaController::class);
 // });
 

@@ -5,6 +5,8 @@ namespace App\Http\Controllers\API;
 use App\Http\Controllers\Controller;
 use App\Models\Venta;
 use App\Models\DetalleVenta;
+use App\Models\Inventario;
+use App\Models\Articulo;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
@@ -15,6 +17,38 @@ class VentaController extends Controller
     {
         $ventas = Venta::with(['cliente', 'user', 'tipoVenta', 'tipoPago', 'caja', 'detalles'])->get();
         return response()->json($ventas);
+    }
+
+    /**
+     * Obtener productos disponibles en inventario (con stock > 0)
+     */
+    public function productosInventario(Request $request)
+    {
+        $almacenId = $request->get('almacen_id');
+        
+        $query = Inventario::with(['articulo', 'almacen'])
+            ->where('saldo_stock', '>', 0);
+        
+        if ($almacenId) {
+            $query->where('almacen_id', $almacenId);
+        }
+        
+        $inventarios = $query->get();
+        
+        // Formatear respuesta con información del artículo y stock disponible
+        $productos = $inventarios->map(function ($inventario) {
+            return [
+                'inventario_id' => $inventario->id,
+                'articulo_id' => $inventario->articulo_id,
+                'almacen_id' => $inventario->almacen_id,
+                'stock_disponible' => $inventario->saldo_stock,
+                'cantidad' => $inventario->cantidad,
+                'articulo' => $inventario->articulo,
+                'almacen' => $inventario->almacen,
+            ];
+        });
+        
+        return response()->json($productos);
     }
 
     public function store(Request $request)
@@ -78,6 +112,53 @@ class VentaController extends Controller
 
         DB::beginTransaction();
         try {
+            // Validar stock disponible antes de crear la venta
+            $almacenId = $request->input('almacen_id'); // Necesitamos el almacén para validar stock
+            
+            if (!$almacenId) {
+                DB::rollBack();
+                return response()->json([
+                    'message' => 'Error de validación',
+                    'errors' => [
+                        'almacen_id' => ['El almacén es requerido para validar el stock disponible.']
+                    ]
+                ], 422);
+            }
+            
+            foreach ($request->detalles as $index => $detalle) {
+                $articuloId = (int)$detalle['articulo_id'];
+                $cantidadVenta = (int)$detalle['cantidad'];
+                
+                // Buscar inventario del artículo
+                $inventario = Inventario::where('articulo_id', $articuloId)
+                    ->where('almacen_id', $almacenId)
+                    ->first();
+                
+                if (!$inventario) {
+                    DB::rollBack();
+                    return response()->json([
+                        'message' => 'Error de validación',
+                        'errors' => [
+                            "detalles.{$index}.articulo_id" => ["El artículo no está disponible en el inventario del almacén seleccionado."]
+                        ]
+                    ], 422);
+                }
+                
+                if ($inventario->saldo_stock < $cantidadVenta) {
+                    DB::rollBack();
+                    $articulo = Articulo::find($articuloId);
+                    return response()->json([
+                        'message' => 'Error de validación',
+                        'errors' => [
+                            "detalles.{$index}.cantidad" => [
+                                "Stock insuficiente. Stock disponible: {$inventario->saldo_stock}, solicitado: {$cantidadVenta}",
+                                "Artículo: " . ($articulo ? $articulo->nombre : "ID {$articuloId}")
+                            ]
+                        ]
+                    ], 422);
+                }
+            }
+            
             $venta = Venta::create($request->except('detalles'));
 
             foreach ($request->detalles as $detalle) {
@@ -88,6 +169,32 @@ class VentaController extends Controller
                     'precio' => $detalle['precio'],
                     'descuento' => $detalle['descuento'] ?? 0,
                 ]);
+                
+                // Actualizar inventario (reducir stock)
+                $articuloId = (int)$detalle['articulo_id'];
+                $cantidadVenta = (int)$detalle['cantidad'];
+                
+                $inventario = Inventario::where('articulo_id', $articuloId)
+                    ->where('almacen_id', $almacenId)
+                    ->first();
+                
+                if ($inventario) {
+                    $inventario->saldo_stock -= $cantidadVenta;
+                    if ($inventario->saldo_stock < 0) {
+                        $inventario->saldo_stock = 0;
+                    }
+                    $inventario->save();
+                    
+                    // Actualizar stock del artículo (stock general)
+                    $articulo = Articulo::find($articuloId);
+                    if ($articulo) {
+                        $articulo->stock -= $cantidadVenta;
+                        if ($articulo->stock < 0) {
+                            $articulo->stock = 0;
+                        }
+                        $articulo->save();
+                    }
+                }
             }
 
             DB::commit();
@@ -95,10 +202,16 @@ class VentaController extends Controller
             return response()->json($venta, 201);
         } catch (\Exception $e) {
             DB::rollBack();
+            \Log::error('Error al crear venta', [
+                'message' => $e->getMessage(),
+                'file' => $e->getFile(),
+                'line' => $e->getLine(),
+                'trace' => $e->getTraceAsString()
+            ]);
             return response()->json([
                 'message' => 'Error al crear la venta',
                 'error' => $e->getMessage(),
-                'file' => $e->getFile(),
+                'file' => basename($e->getFile()),
                 'line' => $e->getLine()
             ], 500);
         }
