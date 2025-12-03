@@ -11,7 +11,7 @@ class AlmacenController extends Controller
     public function index()
     {
         $almacenes = Almacen::with('sucursal')->get();
-        return response()->json($almacenes);
+        return response()->json(['data' => $almacenes]);
     }
 
     public function store(Request $request)

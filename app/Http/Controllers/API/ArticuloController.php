@@ -12,7 +12,7 @@ class ArticuloController extends Controller
     public function index()
     {
         $articulos = Articulo::with(['categoria', 'proveedor', 'medida', 'marca', 'industria'])->get();
-        return response()->json($articulos);
+        return response()->json(['data' => $articulos]);
     }
 
     public function store(Request $request)
@@ -57,14 +57,14 @@ class ArticuloController extends Controller
     public function show($id)
     {
         $articulo = Articulo::with(['categoria', 'proveedor', 'medida', 'marca', 'industria'])->find($id);
-        
+
         if (!$articulo) {
             return response()->json([
                 'message' => 'Artículo no encontrado',
                 'error' => "No se encontró un artículo con el ID: {$id}"
             ], 404);
         }
-        
+
         return response()->json($articulo);
     }
 

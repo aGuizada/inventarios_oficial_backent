@@ -11,7 +11,7 @@ class TransaccionCajaController extends Controller
     public function index()
     {
         $transacciones = TransaccionCaja::with(['caja', 'user'])->get();
-        return response()->json($transacciones);
+        return response()->json(['data' => $transacciones]);
     }
 
     public function store(Request $request)

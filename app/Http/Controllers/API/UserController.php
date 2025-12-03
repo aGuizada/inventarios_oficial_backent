@@ -12,7 +12,7 @@ class UserController extends Controller
     public function index()
     {
         $users = User::with(['rol', 'sucursal'])->get();
-        return response()->json($users);
+        return response()->json(['data' => $users]);
     }
 
     public function store(Request $request)

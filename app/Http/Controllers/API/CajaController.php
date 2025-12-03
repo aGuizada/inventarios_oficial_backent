@@ -11,7 +11,7 @@ class CajaController extends Controller
     public function index()
     {
         $cajas = Caja::with(['sucursal', 'user'])->get();
-        return response()->json($cajas);
+        return response()->json(['data' => $cajas]);
     }
 
     public function store(Request $request)
@@ -83,14 +83,14 @@ class CajaController extends Controller
     public function show($id)
     {
         $caja = Caja::find($id);
-        
+
         if (!$caja) {
             return response()->json([
                 'message' => 'Caja no encontrada',
                 'error' => "No se encontró una caja con el ID: {$id}"
             ], 404);
         }
-        
+
         $caja->load(['sucursal', 'user']);
         return response()->json($caja);
     }
@@ -98,14 +98,14 @@ class CajaController extends Controller
     public function update(Request $request, $id)
     {
         $caja = Caja::find($id);
-        
+
         if (!$caja) {
             return response()->json([
                 'message' => 'Caja no encontrada',
                 'error' => "No se encontró una caja con el ID: {$id}"
             ], 404);
         }
-        
+
         $request->validate([
             'sucursal_id' => 'required|exists:sucursales,id',
             'user_id' => 'required|exists:users,id',
@@ -160,14 +160,14 @@ class CajaController extends Controller
     public function destroy($id)
     {
         $caja = Caja::find($id);
-        
+
         if (!$caja) {
             return response()->json([
                 'message' => 'Caja no encontrada',
                 'error' => "No se encontró una caja con el ID: {$id}"
             ], 404);
         }
-        
+
         $caja->delete();
         return response()->json(null, 204);
     }

@@ -11,7 +11,7 @@ class SucursalController extends Controller
     public function index()
     {
         $sucursales = Sucursal::with('empresa')->get();
-        return response()->json($sucursales);
+        return response()->json(['data' => $sucursales]);
     }
 
     public function store(Request $request)
@@ -36,18 +36,18 @@ class SucursalController extends Controller
     public function show($id)
     {
         $sucursal = Sucursal::with('empresa')->find($id);
-        
+
         if (!$sucursal) {
             return response()->json(['error' => 'Sucursal no encontrada'], 404);
         }
-        
+
         return response()->json($sucursal);
     }
 
     public function update(Request $request, $id)
     {
         $sucursal = Sucursal::find($id);
-        
+
         if (!$sucursal) {
             return response()->json(['error' => 'Sucursal no encontrada'], 404);
         }
@@ -72,11 +72,11 @@ class SucursalController extends Controller
     public function destroy($id)
     {
         $sucursal = Sucursal::find($id);
-        
+
         if (!$sucursal) {
             return response()->json(['error' => 'Sucursal no encontrada'], 404);
         }
-        
+
         $sucursal->delete();
         return response()->json(null, 204);
     }

@@ -11,7 +11,7 @@ class IndustriaController extends Controller
     public function index()
     {
         $industrias = Industria::all();
-        return response()->json($industrias);
+        return response()->json(['data' => $industrias]);
     }
 
     public function store(Request $request)

@@ -11,7 +11,7 @@ class MedidaController extends Controller
     public function index()
     {
         $medidas = Medida::all();
-        return response()->json($medidas);
+        return response()->json(['data' => $medidas]);
     }
 
     public function store(Request $request)

@@ -11,7 +11,7 @@ class ArqueoCajaController extends Controller
     public function index()
     {
         $arqueos = ArqueoCaja::with(['caja', 'user'])->get();
-        return response()->json($arqueos);
+        return response()->json(['data' => $arqueos]);
     }
 
     public function store(Request $request)

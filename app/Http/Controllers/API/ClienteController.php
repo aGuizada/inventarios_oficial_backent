@@ -11,7 +11,7 @@ class ClienteController extends Controller
     public function index()
     {
         $clientes = Cliente::all();
-        return response()->json($clientes);
+        return response()->json(['data' => $clientes]);
     }
 
     public function store(Request $request)

@@ -11,7 +11,7 @@ class RolController extends Controller
     public function index()
     {
         $roles = Rol::all();
-        return response()->json($roles);
+        return response()->json(['data' => $roles]);
     }
 
     public function store(Request $request)
@@ -30,18 +30,18 @@ class RolController extends Controller
     public function show($id)
     {
         $rol = Rol::find($id);
-        
+
         if (!$rol) {
             return response()->json(['error' => 'Rol no encontrado'], 404);
         }
-        
+
         return response()->json($rol);
     }
 
     public function update(Request $request, $id)
     {
         $rol = Rol::find($id);
-        
+
         if (!$rol) {
             return response()->json(['error' => 'Rol no encontrado'], 404);
         }
@@ -60,11 +60,11 @@ class RolController extends Controller
     public function destroy($id)
     {
         $rol = Rol::find($id);
-        
+
         if (!$rol) {
             return response()->json(['error' => 'Rol no encontrado'], 404);
         }
-        
+
         $rol->delete();
         return response()->json(null, 204);
     }
