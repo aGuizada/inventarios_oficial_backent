@@ -21,6 +21,11 @@ class CreditoVenta extends Model
         'proximo_pago',
     ];
 
+    protected $casts = [
+        'proximo_pago' => 'datetime',
+        'total' => 'decimal:2',
+    ];
+
     public function venta()
     {
         return $this->belongsTo(Venta::class);

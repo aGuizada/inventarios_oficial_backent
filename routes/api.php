@@ -92,6 +92,8 @@ Route::prefix('auth')->group(function () {
     Route::apiResource('creditos-venta', CreditoVentaController::class);
 
     // Cuotas de Crédito
+    Route::get('cuotas-credito/credito/{creditoId}', [CuotaCreditoController::class, 'getByCredito']);
+    Route::post('cuotas-credito/{id}/pagar', [CuotaCreditoController::class, 'pagarCuota']);
     Route::apiResource('cuotas-credito', CuotaCreditoController::class);
 
     // Empresas

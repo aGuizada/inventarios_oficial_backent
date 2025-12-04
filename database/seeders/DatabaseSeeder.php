@@ -20,6 +20,8 @@ class DatabaseSeeder extends Seeder
             EmpresaSeeder::class,
             SucursalSeeder::class,
             UserSeeder::class,
+            // TipoVentaSeeder::class, // Comentado: ya existen datos en la BD
+            // TipoPagoSeeder::class,  // Comentado: ya existen datos en la BD
         ]);
     }
 }
