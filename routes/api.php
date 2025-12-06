@@ -140,6 +140,9 @@ Route::prefix('auth')->group(function () {
 
     // Traspasos
     Route::apiResource('traspasos', TraspasoController::class);
+    Route::post('traspasos/{traspaso}/aprobar', [TraspasoController::class, 'aprobar']);
+    Route::post('traspasos/{traspaso}/recibir', [TraspasoController::class, 'recibir']);
+    Route::post('traspasos/{traspaso}/rechazar', [TraspasoController::class, 'rechazar']);
 
     // Ventas
     Route::get('ventas/productos-inventario', [VentaController::class, 'productosInventario']);

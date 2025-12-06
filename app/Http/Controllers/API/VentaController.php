@@ -15,7 +15,7 @@ class VentaController extends Controller
 {
     public function index()
     {
-        $ventas = Venta::with(['cliente', 'user', 'tipoVenta', 'tipoPago', 'caja', 'detalles'])->get();
+        $ventas = Venta::with(['cliente', 'user', 'tipoVenta', 'tipoPago', 'caja', 'detalles.articulo'])->get();
         return response()->json($ventas);
     }
 

@@ -18,7 +18,7 @@ class CompraController extends Controller
 {
     public function index()
     {
-        $compras = CompraBase::with(['proveedor', 'user', 'almacen', 'caja', 'detalles'])->get();
+        $compras = CompraBase::with(['proveedor', 'user', 'almacen', 'caja', 'detalles.articulo'])->get();
         return response()->json($compras);
     }
 
@@ -84,6 +84,17 @@ class CompraController extends Controller
             $compraData['user_id'] = (int)$compraData['user_id'];
             $compraData['almacen_id'] = (int)$compraData['almacen_id'];
             $compraData['total'] = (float)$compraData['total'];
+            
+            // Convertir tipo_compra a mayúsculas para que coincida con el enum de la base de datos
+            if (isset($compraData['tipo_compra'])) {
+                $compraData['tipo_compra'] = strtoupper($compraData['tipo_compra']);
+            }
+            
+            // Asegurar que los campos de comprobante tengan valores por defecto si no se proporcionan
+            // Estos campos son requeridos en la base de datos (no nullable)
+            $compraData['tipo_comprobante'] = !empty($compraData['tipo_comprobante']) ? $compraData['tipo_comprobante'] : 'SIN COMPROBANTE';
+            $compraData['serie_comprobante'] = $compraData['serie_comprobante'] ?? null;
+            $compraData['num_comprobante'] = !empty($compraData['num_comprobante']) ? $compraData['num_comprobante'] : '00000000';
             
             // caja_id es requerido según la migración
             if (!isset($compraData['caja_id']) || empty($compraData['caja_id'])) {

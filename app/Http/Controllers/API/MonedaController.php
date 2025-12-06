@@ -26,6 +26,7 @@ class MonedaController extends Controller
         ]);
 
         $moneda = Moneda::create($request->all());
+        $moneda->load('empresa');
 
         return response()->json($moneda, 201);
     }
@@ -48,6 +49,7 @@ class MonedaController extends Controller
         ]);
 
         $moneda->update($request->all());
+        $moneda->load('empresa');
 
         return response()->json($moneda);
     }
