@@ -14,7 +14,7 @@ class ArticuloController extends Controller
 {
     public function index()
     {
-        $articulos = Articulo::with(['categoria', 'proveedor', 'medida', 'marca', 'industria'])->get();
+        $articulos = Articulo::with(['categoria', 'proveedor', 'medida', 'marca', 'industria'])->paginate(10);
         return response()->json($articulos);
     }
 
