@@ -52,101 +52,103 @@ Route::prefix('auth')->group(function () {
 
 // Rutas protegidas (requieren autenticación)
 // Route::middleware('auth:sanctum')->group(function () {
-    // Logout
-    Route::post('/auth/logout', [AuthController::class, 'logout']);
+// Logout
+Route::post('/auth/logout', [AuthController::class, 'logout']);
 
-    // Usuarios
-    Route::apiResource('users', UserController::class);
+// Usuarios
+Route::apiResource('users', UserController::class);
 
-    // Almacenes
-    Route::apiResource('almacenes', AlmacenController::class);
+// Almacenes
+Route::apiResource('almacenes', AlmacenController::class);
 
-    // Arqueos de Caja
-    Route::apiResource('arqueos-caja', ArqueoCajaController::class);
+// Arqueos de Caja
+Route::apiResource('arqueos-caja', ArqueoCajaController::class);
 
-    // Artículos
-    Route::apiResource('articulos', ArticuloController::class);
+// Artículos
+Route::get('articulos/template/download', [ArticuloController::class, 'downloadTemplate']);
+Route::post('articulos/import', [ArticuloController::class, 'import']);
+Route::apiResource('articulos', ArticuloController::class);
 
-    // Cajas
-    Route::apiResource('cajas', CajaController::class);
+// Cajas
+Route::apiResource('cajas', CajaController::class);
 
-    // Categorías
-    Route::apiResource('categorias', CategoriaController::class);
+// Categorías
+Route::apiResource('categorias', CategoriaController::class);
 
-    // Clientes
-    Route::apiResource('clientes', ClienteController::class);
+// Clientes
+Route::apiResource('clientes', ClienteController::class);
 
-    // Compras
-    Route::apiResource('compras', CompraController::class);
+// Compras
+Route::apiResource('compras', CompraController::class);
 
-    // Cuotas de Compra
-    Route::apiResource('compra-cuotas', CompraCuotaController::class);
+// Cuotas de Compra
+Route::apiResource('compra-cuotas', CompraCuotaController::class);
 
-    // Configuración de Trabajo
-    Route::apiResource('configuracion-trabajo', ConfiguracionTrabajoController::class);
+// Configuración de Trabajo
+Route::apiResource('configuracion-trabajo', ConfiguracionTrabajoController::class);
 
-    // Cotizaciones
-    Route::apiResource('cotizaciones', CotizacionController::class);
+// Cotizaciones
+Route::apiResource('cotizaciones', CotizacionController::class);
 
-    // Créditos de Venta
-    Route::apiResource('creditos-venta', CreditoVentaController::class);
+// Créditos de Venta
+Route::apiResource('creditos-venta', CreditoVentaController::class);
 
-    // Cuotas de Crédito
-    Route::get('cuotas-credito/credito/{creditoId}', [CuotaCreditoController::class, 'getByCredito']);
-    Route::post('cuotas-credito/{id}/pagar', [CuotaCreditoController::class, 'pagarCuota']);
-    Route::apiResource('cuotas-credito', CuotaCreditoController::class);
+// Cuotas de Crédito
+Route::get('cuotas-credito/credito/{creditoId}', [CuotaCreditoController::class, 'getByCredito']);
+Route::post('cuotas-credito/{id}/pagar', [CuotaCreditoController::class, 'pagarCuota']);
+Route::apiResource('cuotas-credito', CuotaCreditoController::class);
 
-    // Empresas
-    Route::apiResource('empresas', EmpresaController::class);
+// Empresas
+Route::apiResource('empresas', EmpresaController::class);
 
-    // Industrias
-    Route::apiResource('industrias', IndustriaController::class);
+// Industrias
+Route::apiResource('industrias', IndustriaController::class);
 
-    // Inventarios
-    Route::apiResource('inventarios', InventarioController::class);
+// Inventarios
+Route::apiResource('inventarios', InventarioController::class);
 
-    // Marcas
-    Route::apiResource('marcas', MarcaController::class);
+// Marcas
+Route::apiResource('marcas', MarcaController::class);
 
-    // Medidas
-    Route::apiResource('medidas', MedidaController::class);
+// Medidas
+Route::apiResource('medidas', MedidaController::class);
 
-    // Monedas
-    Route::apiResource('monedas', MonedaController::class);
+// Monedas
+Route::apiResource('monedas', MonedaController::class);
 
-    // Notificaciones
-    Route::apiResource('notificaciones', NotificationController::class);
+// Notificaciones
+Route::apiResource('notificaciones', NotificationController::class);
 
-    // Precios
-    Route::apiResource('precios', PrecioController::class);
+// Precios
+Route::apiResource('precios', PrecioController::class);
 
-    // Proveedores
-    Route::apiResource('proveedores', ProveedorController::class);
+// Proveedores
+Route::apiResource('proveedores', ProveedorController::class);
 
-    // Roles
-    Route::apiResource('roles', RolController::class);
+// Roles
+Route::apiResource('roles', RolController::class);
 
-    // Sucursales
-    Route::apiResource('sucursales', SucursalController::class);
+// Sucursales
+Route::apiResource('sucursales', SucursalController::class);
 
-    // Tipos de Pago
-    Route::apiResource('tipos-pago', TipoPagoController::class);
+// Tipos de Pago
+Route::apiResource('tipos-pago', TipoPagoController::class);
 
-    // Tipos de Venta
-    Route::apiResource('tipos-venta', TipoVentaController::class);
+// Tipos de Venta
+Route::apiResource('tipos-venta', TipoVentaController::class);
 
-    // Transacciones de Caja
-    Route::apiResource('transacciones-caja', TransaccionCajaController::class);
+// Transacciones de Caja
+Route::apiResource('transacciones-caja', TransaccionCajaController::class);
 
-    // Traspasos
-    Route::apiResource('traspasos', TraspasoController::class);
-    Route::post('traspasos/{traspaso}/aprobar', [TraspasoController::class, 'aprobar']);
-    Route::post('traspasos/{traspaso}/recibir', [TraspasoController::class, 'recibir']);
-    Route::post('traspasos/{traspaso}/rechazar', [TraspasoController::class, 'rechazar']);
+// Traspasos
+Route::apiResource('traspasos', TraspasoController::class);
+Route::post('traspasos/{traspaso}/aprobar', [TraspasoController::class, 'aprobar']);
+Route::post('traspasos/{traspaso}/recibir', [TraspasoController::class, 'recibir']);
+Route::post('traspasos/{traspaso}/rechazar', [TraspasoController::class, 'rechazar']);
 
-    // Ventas
-    Route::get('ventas/productos-inventario', [VentaController::class, 'productosInventario']);
-    Route::apiResource('ventas', VentaController::class);
+// Ventas
+Route::get('ventas/productos-inventario', [VentaController::class, 'productosInventario']);
+Route::apiResource('ventas', VentaController::class);
 // });
 
 // Ruta de salud/health check (pública)
