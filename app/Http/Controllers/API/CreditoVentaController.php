@@ -4,6 +4,7 @@ namespace App\Http\Controllers\API;
 
 use App\Http\Controllers\Controller;
 use App\Models\CreditoVenta;
+use App\Models\CuotaCredito;
 use Illuminate\Http\Request;
 use Carbon\Carbon;
 
