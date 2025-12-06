@@ -6,7 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Models\Articulo;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Storage;
-use Maatwebsite\Excel\Facades\Excel;
+use Maatwebsite\Excel\Excel as ExcelService;
 use App\Exports\ArticulosExport;
 use App\Imports\ArticulosImport;
 
@@ -145,7 +145,8 @@ class ArticuloController extends Controller
      */
     public function downloadTemplate()
     {
-        return Excel::download(new ArticulosExport(), 'plantilla_articulos.xlsx');
+        $excel = app(ExcelService::class);
+        return $excel->download(new ArticulosExport(), 'plantilla_articulos.xlsx');
     }
 
     /**
@@ -162,7 +163,8 @@ class ArticuloController extends Controller
 
         try {
             $import = new ArticulosImport();
-            Excel::import($import, $request->file('file'));
+            $excel = app(ExcelService::class);
+            $excel->import($import, $request->file('file'));
 
             $errors = [];
 
