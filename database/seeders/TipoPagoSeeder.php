@@ -52,3 +52,6 @@ class TipoPagoSeeder extends Seeder
 }
 
 
+
+
+

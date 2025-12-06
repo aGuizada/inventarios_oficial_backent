@@ -6,18 +6,20 @@ use App\Http\Controllers\Controller;
 use App\Models\Articulo;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Storage;
+use Illuminate\Validation\ValidationException;
 
 class ArticuloController extends Controller
 {
     public function index()
     {
         $articulos = Articulo::with(['categoria', 'proveedor', 'medida', 'marca', 'industria'])->get();
-        return response()->json(['data' => $articulos]);
+        return response()->json($articulos);
     }
 
     public function store(Request $request)
     {
-        $request->validate([
+        try {
+            $request->validate([
             'categoria_id' => 'required|exists:categorias,id',
             'proveedor_id' => 'required|exists:proveedores,id',
             'medida_id' => 'required|exists:medidas,id',
@@ -52,25 +54,29 @@ class ArticuloController extends Controller
         $articulo->load(['categoria', 'proveedor', 'medida', 'marca', 'industria']);
 
         return response()->json($articulo, 201);
+        } catch (ValidationException $e) {
+            return response()->json([
+                'message' => 'Error de validación',
+                'errors' => $e->errors()
+            ], 422);
+        } catch (\Exception $e) {
+            return response()->json([
+                'message' => 'Error al crear el artículo',
+                'error' => $e->getMessage()
+            ], 500);
+        }
     }
 
-    public function show($id)
+    public function show(Articulo $articulo)
     {
-        $articulo = Articulo::with(['categoria', 'proveedor', 'medida', 'marca', 'industria'])->find($id);
-
-        if (!$articulo) {
-            return response()->json([
-                'message' => 'Artículo no encontrado',
-                'error' => "No se encontró un artículo con el ID: {$id}"
-            ], 404);
-        }
-
+        $articulo->load(['categoria', 'proveedor', 'medida', 'marca', 'industria']);
         return response()->json($articulo);
     }
 
     public function update(Request $request, Articulo $articulo)
     {
-        $request->validate([
+        try {
+            $request->validate([
             'categoria_id' => 'required|exists:categorias,id',
             'proveedor_id' => 'required|exists:proveedores,id',
             'medida_id' => 'required|exists:medidas,id',
@@ -108,6 +114,17 @@ class ArticuloController extends Controller
         $articulo->load(['categoria', 'proveedor', 'medida', 'marca', 'industria']);
 
         return response()->json($articulo);
+        } catch (ValidationException $e) {
+            return response()->json([
+                'message' => 'Error de validación',
+                'errors' => $e->errors()
+            ], 422);
+        } catch (\Exception $e) {
+            return response()->json([
+                'message' => 'Error al actualizar el artículo',
+                'error' => $e->getMessage()
+            ], 500);
+        }
     }
 
     public function destroy(Articulo $articulo)
