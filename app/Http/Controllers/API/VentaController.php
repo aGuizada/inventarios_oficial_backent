@@ -7,6 +7,9 @@ use App\Models\Venta;
 use App\Models\DetalleVenta;
 use App\Models\Inventario;
 use App\Models\Articulo;
+use App\Models\Caja;
+use App\Models\TipoVenta;
+use App\Models\TipoPago;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
@@ -194,6 +197,42 @@ class VentaController extends Controller
                         }
                         $articulo->save();
                     }
+                }
+            }
+
+            // Actualizar la caja con la información de la venta
+            if ($venta->caja_id) {
+                $caja = Caja::find($venta->caja_id);
+                if ($caja) {
+                    $totalVenta = (float)$venta->total;
+                    
+                    // Obtener tipo de venta y tipo de pago
+                    $tipoVenta = TipoVenta::find($venta->tipo_venta_id);
+                    $tipoPago = TipoPago::find($venta->tipo_pago_id);
+                    
+                    $nombreTipoVenta = $tipoVenta ? strtolower(trim($tipoVenta->nombre_tipo_ventas)) : '';
+                    $nombreTipoPago = $tipoPago ? strtolower(trim($tipoPago->nombre_tipo_pago)) : '';
+                    
+                    // Actualizar ventas totales
+                    $caja->ventas = ($caja->ventas ?? 0) + $totalVenta;
+                    
+                    // Actualizar ventas por tipo (contado o crédito)
+                    if (strpos($nombreTipoVenta, 'contado') !== false) {
+                        $caja->ventas_contado = ($caja->ventas_contado ?? 0) + $totalVenta;
+                    } elseif (strpos($nombreTipoVenta, 'crédito') !== false || strpos($nombreTipoVenta, 'credito') !== false) {
+                        $caja->ventas_credito = ($caja->ventas_credito ?? 0) + $totalVenta;
+                    }
+                    
+                    // Actualizar pagos por método de pago
+                    if (strpos($nombreTipoPago, 'efectivo') !== false) {
+                        $caja->pagos_efectivo = ($caja->pagos_efectivo ?? 0) + $totalVenta;
+                    } elseif (strpos($nombreTipoPago, 'qr') !== false) {
+                        $caja->pagos_qr = ($caja->pagos_qr ?? 0) + $totalVenta;
+                    } elseif (strpos($nombreTipoPago, 'transferencia') !== false) {
+                        $caja->pagos_transferencia = ($caja->pagos_transferencia ?? 0) + $totalVenta;
+                    }
+                    
+                    $caja->save();
                 }
             }
 

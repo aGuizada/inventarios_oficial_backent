@@ -96,20 +96,44 @@ class CompraController extends Controller
             $compraData['serie_comprobante'] = $compraData['serie_comprobante'] ?? null;
             $compraData['num_comprobante'] = !empty($compraData['num_comprobante']) ? $compraData['num_comprobante'] : '00000000';
             
-            // caja_id es requerido según la migración
+            // Validar que haya una caja abierta
             if (!isset($compraData['caja_id']) || empty($compraData['caja_id'])) {
-                // Si no se proporciona, usar la primera caja disponible o lanzar error
-                $primeraCaja = \App\Models\Caja::first();
-                if (!$primeraCaja) {
+                // Buscar la primera caja abierta
+                $cajaAbierta = Caja::where('estado', 1)->orWhere('estado', '1')->orWhere('estado', true)->first();
+                if (!$cajaAbierta) {
                     DB::rollBack();
                     return response()->json([
                         'error' => 'Error al crear la compra',
-                        'message' => 'No hay cajas disponibles en el sistema. Por favor, configure al menos una caja.'
+                        'message' => 'No hay una caja abierta. Por favor, abra una caja antes de realizar compras.'
                     ], 400);
                 }
-                $compraData['caja_id'] = $primeraCaja->id;
+                $compraData['caja_id'] = $cajaAbierta->id;
             } else {
                 $compraData['caja_id'] = (int)$compraData['caja_id'];
+                
+                // Validar que la caja esté abierta
+                $caja = Caja::find($compraData['caja_id']);
+                if (!$caja) {
+                    DB::rollBack();
+                    return response()->json([
+                        'error' => 'Error al crear la compra',
+                        'message' => 'La caja especificada no existe.'
+                    ], 400);
+                }
+                
+                // Verificar que la caja esté abierta (estado = 1, '1', true, o 'abierta')
+                $isCajaOpen = $caja->estado === 1 || 
+                             $caja->estado === '1' || 
+                             $caja->estado === true || 
+                             $caja->estado === 'abierta';
+                
+                if (!$isCajaOpen) {
+                    DB::rollBack();
+                    return response()->json([
+                        'error' => 'Error al crear la compra',
+                        'message' => 'La caja seleccionada está cerrada. Solo se pueden realizar compras con una caja abierta.'
+                    ], 400);
+                }
             }
             
             // Formatear fecha_hora
@@ -240,6 +264,88 @@ class CompraController extends Controller
                 ]);
             }
 
+            // Actualizar la caja con la información de la compra
+            try {
+                if ($compraBase->caja_id) {
+                    $caja = Caja::find($compraBase->caja_id);
+                    if ($caja) {
+                        $totalCompra = (float)$compraBase->total;
+                        $tipoCompra = strtoupper(trim($compraBase->tipo_compra));
+                        
+                        \Log::info('Actualizando caja con compra', [
+                            'compra_id' => $compraBase->id,
+                            'caja_id' => $compraBase->caja_id,
+                            'total_compra' => $totalCompra,
+                            'tipo_compra' => $tipoCompra,
+                            'tipo_compra_original' => $compraBase->tipo_compra,
+                            'compras_contado_antes' => $caja->compras_contado,
+                            'compras_credito_antes' => $caja->compras_credito
+                        ]);
+                        
+                        // Actualizar compras por tipo (contado o crédito) usando increment para evitar problemas de concurrencia
+                        if ($tipoCompra === 'CONTADO') {
+                            $valorAnterior = (float)($caja->compras_contado ?? 0);
+                            // Usar DB::raw para actualizar directamente en la base de datos
+                            DB::table('cajas')
+                                ->where('id', $caja->id)
+                                ->increment('compras_contado', $totalCompra);
+                            
+                            // Recargar para obtener el nuevo valor
+                            $caja->refresh();
+                            
+                            \Log::info('Actualizado compras_contado', [
+                                'valor_anterior' => $valorAnterior,
+                                'total_compra' => $totalCompra,
+                                'nuevo_valor' => $caja->compras_contado
+                            ]);
+                        } elseif ($tipoCompra === 'CREDITO' || $tipoCompra === 'CRÉDITO') {
+                            $valorAnterior = (float)($caja->compras_credito ?? 0);
+                            // Usar DB::raw para actualizar directamente en la base de datos
+                            DB::table('cajas')
+                                ->where('id', $caja->id)
+                                ->increment('compras_credito', $totalCompra);
+                            
+                            // Recargar para obtener el nuevo valor
+                            $caja->refresh();
+                            
+                            \Log::info('Actualizado compras_credito', [
+                                'valor_anterior' => $valorAnterior,
+                                'total_compra' => $totalCompra,
+                                'nuevo_valor' => $caja->compras_credito
+                            ]);
+                        } else {
+                            \Log::warning('Tipo de compra no reconocido', [
+                                'tipo_compra' => $tipoCompra,
+                                'tipo_compra_original' => $compraBase->tipo_compra
+                            ]);
+                        }
+                        
+                        \Log::info('Caja actualizada después de compra', [
+                            'compras_contado_despues' => $caja->compras_contado,
+                            'compras_credito_despues' => $caja->compras_credito
+                        ]);
+                    } else {
+                        \Log::warning('Caja no encontrada para actualizar', [
+                            'caja_id' => $compraBase->caja_id,
+                            'compra_id' => $compraBase->id
+                        ]);
+                    }
+                } else {
+                    \Log::warning('Compra sin caja_id', [
+                        'compra_id' => $compraBase->id
+                    ]);
+                }
+            } catch (\Exception $e) {
+                \Log::error('Error al actualizar la caja con la compra', [
+                    'compra_id' => $compraBase->id,
+                    'caja_id' => $compraBase->caja_id ?? null,
+                    'error' => $e->getMessage(),
+                    'file' => $e->getFile(),
+                    'line' => $e->getLine()
+                ]);
+                // No lanzar excepción para no romper la transacción de la compra
+            }
+
             DB::commit();
             $compraBase->load('detalles');
             return response()->json($compraBase, 201);
@@ -326,6 +432,11 @@ class CompraController extends Controller
                 DB::rollBack();
                 return response()->json(['error' => 'No se pudo determinar el proveedor'], 400);
             }
+
+            // Guardar valores anteriores para revertir cambios en la caja
+            $totalAnterior = (float)$compra->total;
+            $tipoCompraAnterior = strtoupper(trim($compra->tipo_compra));
+            $cajaIdAnterior = $compra->caja_id;
 
             // Preparar datos de la compra
             $compraData = $request->except(['detalles', 'proveedor_nombre']);
@@ -455,6 +566,37 @@ class CompraController extends Controller
                 }
             }
 
+            // Revertir cambios anteriores en la caja
+            if ($cajaIdAnterior) {
+                $cajaAnterior = Caja::find($cajaIdAnterior);
+                if ($cajaAnterior) {
+                    if ($tipoCompraAnterior === 'CONTADO') {
+                        $cajaAnterior->compras_contado = max(0, ($cajaAnterior->compras_contado ?? 0) - $totalAnterior);
+                    } elseif ($tipoCompraAnterior === 'CREDITO' || $tipoCompraAnterior === 'CRÉDITO') {
+                        $cajaAnterior->compras_credito = max(0, ($cajaAnterior->compras_credito ?? 0) - $totalAnterior);
+                    }
+                    $cajaAnterior->save();
+                }
+            }
+
+            // Actualizar la caja con los nuevos valores
+            if ($compra->caja_id) {
+                $caja = Caja::find($compra->caja_id);
+                if ($caja) {
+                    $totalCompra = (float)$compra->total;
+                    $tipoCompra = strtoupper(trim($compra->tipo_compra));
+                    
+                    // Actualizar compras por tipo (contado o crédito)
+                    if ($tipoCompra === 'CONTADO') {
+                        $caja->compras_contado = ($caja->compras_contado ?? 0) + $totalCompra;
+                    } elseif ($tipoCompra === 'CREDITO' || $tipoCompra === 'CRÉDITO') {
+                        $caja->compras_credito = ($caja->compras_credito ?? 0) + $totalCompra;
+                    }
+                    
+                    $caja->save();
+                }
+            }
+
             DB::commit();
             $compra->load('detalles');
             return response()->json($compra);
@@ -481,6 +623,11 @@ class CompraController extends Controller
         try {
             // Obtener detalles de la compra antes de eliminarla
             $detalles = DetalleCompra::where('compra_base_id', $compra->id)->get();
+            
+            // Guardar información de la caja antes de eliminar
+            $totalCompra = (float)$compra->total;
+            $tipoCompra = strtoupper(trim($compra->tipo_compra));
+            $cajaId = $compra->caja_id;
             
             // Revertir cambios en inventario
             foreach ($detalles as $detalle) {
@@ -512,6 +659,19 @@ class CompraController extends Controller
                         $articulo->stock = 0;
                     }
                     $articulo->save();
+                }
+            }
+            
+            // Revertir cambios en la caja
+            if ($cajaId) {
+                $caja = Caja::find($cajaId);
+                if ($caja) {
+                    if ($tipoCompra === 'CONTADO') {
+                        $caja->compras_contado = max(0, ($caja->compras_contado ?? 0) - $totalCompra);
+                    } elseif ($tipoCompra === 'CREDITO' || $tipoCompra === 'CRÉDITO') {
+                        $caja->compras_credito = max(0, ($caja->compras_credito ?? 0) - $totalCompra);
+                    }
+                    $caja->save();
                 }
             }
             

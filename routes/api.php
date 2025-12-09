@@ -138,6 +138,7 @@ Route::apiResource('tipos-pago', TipoPagoController::class);
 Route::apiResource('tipos-venta', TipoVentaController::class);
 
 // Transacciones de Caja
+Route::get('transacciones-caja/caja/{cajaId}', [TransaccionCajaController::class, 'getByCaja']);
 Route::apiResource('transacciones-caja', TransaccionCajaController::class);
 
 // Traspasos
