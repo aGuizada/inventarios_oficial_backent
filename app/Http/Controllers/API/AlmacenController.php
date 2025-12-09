@@ -3,15 +3,30 @@
 namespace App\Http\Controllers\API;
 
 use App\Http\Controllers\Controller;
+use App\Http\Traits\HasPagination;
 use App\Models\Almacen;
 use Illuminate\Http\Request;
 
 class AlmacenController extends Controller
 {
-    public function index()
+    use HasPagination;
+
+    public function index(Request $request)
     {
-        $almacenes = Almacen::with('sucursal')->get();
-        return response()->json(['data' => $almacenes]);
+        $query = Almacen::with('sucursal');
+
+        $searchableFields = [
+            'id',
+            'nombre_almacen',
+            'ubicacion',
+            'telefono',
+            'sucursal.nombre'
+        ];
+
+        $query = $this->applySearch($query, $request, $searchableFields);
+        $query = $this->applySorting($query, $request, ['id', 'nombre_almacen', 'created_at'], 'id', 'desc');
+
+        return $this->paginateResponse($query, $request, 15, 100);
     }
 
     public function store(Request $request)

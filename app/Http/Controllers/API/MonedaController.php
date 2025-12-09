@@ -3,15 +3,30 @@
 namespace App\Http\Controllers\API;
 
 use App\Http\Controllers\Controller;
+use App\Http\Traits\HasPagination;
 use App\Models\Moneda;
 use Illuminate\Http\Request;
 
 class MonedaController extends Controller
 {
-    public function index()
+    use HasPagination;
+
+    public function index(Request $request)
     {
-        $monedas = Moneda::with('empresa')->get();
-        return response()->json($monedas);
+        $query = Moneda::with('empresa');
+
+        $searchableFields = [
+            'id',
+            'nombre',
+            'pais',
+            'simbolo',
+            'empresa.nombre'
+        ];
+
+        $query = $this->applySearch($query, $request, $searchableFields);
+        $query = $this->applySorting($query, $request, ['id', 'nombre', 'tipo_cambio', 'created_at'], 'id', 'desc');
+
+        return $this->paginateResponse($query, $request, 15, 100);
     }
 
     public function store(Request $request)

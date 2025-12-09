@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\API;
 
 use App\Http\Controllers\Controller;
+use App\Http\Traits\HasPagination;
 use App\Models\Cotizacion;
 use App\Models\DetalleCotizacion;
 use App\Models\Cliente;
@@ -12,10 +13,38 @@ use Illuminate\Support\Facades\DB;
 
 class CotizacionController extends Controller
 {
-    public function index()
+    use HasPagination;
+
+    public function index(Request $request)
     {
-        $cotizaciones = Cotizacion::with(['cliente', 'user', 'almacen', 'detalles'])->get();
-        return response()->json($cotizaciones);
+        try {
+            $query = Cotizacion::with(['cliente', 'user', 'almacen', 'detalles.articulo']);
+
+            $searchableFields = [
+                'id',
+                'cliente.nombre',
+                'cliente.num_documento',
+                'user.name'
+            ];
+
+            $query = $this->applySearch($query, $request, $searchableFields);
+            $query = $this->applySorting($query, $request, ['id', 'fecha_hora', 'total', 'estado'], 'id', 'desc');
+
+            return $this->paginateResponse($query, $request, 15, 100);
+        } catch (\Exception $e) {
+            \Log::error('Error en CotizacionController@index', [
+                'message' => $e->getMessage(),
+                'file' => $e->getFile(),
+                'line' => $e->getLine(),
+                'trace' => $e->getTraceAsString()
+            ]);
+            
+            return response()->json([
+                'success' => false,
+                'message' => 'Error al cargar las cotizaciones',
+                'error' => $e->getMessage()
+            ], 500);
+        }
     }
 
     public function store(Request $request)

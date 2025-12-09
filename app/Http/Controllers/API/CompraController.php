@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\API;
 
 use App\Http\Controllers\Controller;
+use App\Http\Traits\HasPagination;
 use App\Models\CompraBase;
 use App\Models\DetalleCompra;
 use App\Models\CompraContado;
@@ -16,10 +17,41 @@ use Illuminate\Support\Facades\DB;
 
 class CompraController extends Controller
 {
-    public function index()
+    use HasPagination;
+
+    public function index(Request $request)
     {
-        $compras = CompraBase::with(['proveedor', 'user', 'almacen', 'caja', 'detalles.articulo'])->get();
-        return response()->json($compras);
+        try {
+            $query = CompraBase::with(['proveedor', 'user', 'almacen', 'caja', 'detalles.articulo']);
+
+            $searchableFields = [
+                'id',
+                'num_comprobante',
+                'serie_comprobante',
+                'tipo_comprobante',
+                'proveedor.nombre',
+                'proveedor.num_documento',
+                'user.name'
+            ];
+
+            $query = $this->applySearch($query, $request, $searchableFields);
+            $query = $this->applySorting($query, $request, ['id', 'fecha_hora', 'total', 'num_comprobante'], 'id', 'desc');
+
+            return $this->paginateResponse($query, $request, 15, 100);
+        } catch (\Exception $e) {
+            \Log::error('Error en CompraController@index', [
+                'message' => $e->getMessage(),
+                'file' => $e->getFile(),
+                'line' => $e->getLine(),
+                'trace' => $e->getTraceAsString()
+            ]);
+            
+            return response()->json([
+                'success' => false,
+                'message' => 'Error al cargar las compras',
+                'error' => $e->getMessage()
+            ], 500);
+        }
     }
 
     public function store(Request $request)

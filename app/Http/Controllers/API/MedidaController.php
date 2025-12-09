@@ -3,15 +3,27 @@
 namespace App\Http\Controllers\API;
 
 use App\Http\Controllers\Controller;
+use App\Http\Traits\HasPagination;
 use App\Models\Medida;
 use Illuminate\Http\Request;
 
 class MedidaController extends Controller
 {
-    public function index()
+    use HasPagination;
+
+    public function index(Request $request)
     {
-        $medidas = Medida::all();
-        return response()->json(['data' => $medidas]);
+        $query = Medida::query();
+
+        $searchableFields = [
+            'id',
+            'nombre_medida'
+        ];
+
+        $query = $this->applySearch($query, $request, $searchableFields);
+        $query = $this->applySorting($query, $request, ['id', 'nombre_medida', 'created_at'], 'id', 'desc');
+
+        return $this->paginateResponse($query, $request, 15, 100);
     }
 
     public function store(Request $request)

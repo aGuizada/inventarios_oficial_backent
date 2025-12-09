@@ -3,15 +3,28 @@
 namespace App\Http\Controllers\API;
 
 use App\Http\Controllers\Controller;
+use App\Http\Traits\HasPagination;
 use App\Models\Categoria;
 use Illuminate\Http\Request;
 
 class CategoriaController extends Controller
 {
-    public function index()
+    use HasPagination;
+
+    public function index(Request $request)
     {
-        $categorias = Categoria::all();
-        return response()->json(['data' => $categorias]);
+        $query = Categoria::query();
+
+        $searchableFields = [
+            'id',
+            'nombre',
+            'descripcion'
+        ];
+
+        $query = $this->applySearch($query, $request, $searchableFields);
+        $query = $this->applySorting($query, $request, ['id', 'nombre', 'created_at'], 'id', 'desc');
+
+        return $this->paginateResponse($query, $request, 15, 100);
     }
 
     public function store(Request $request)

@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\API;
 
 use App\Http\Controllers\Controller;
+use App\Http\Traits\HasPagination;
 use App\Models\Articulo;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Storage;
@@ -12,10 +13,34 @@ use App\Imports\ArticulosImport;
 
 class ArticuloController extends Controller
 {
-    public function index()
+    use HasPagination;
+
+    public function index(Request $request)
     {
-        $articulos = Articulo::with(['categoria', 'proveedor', 'medida', 'marca', 'industria'])->paginate(10);
-        return response()->json($articulos);
+        $query = Articulo::with(['categoria', 'proveedor', 'medida', 'marca', 'industria']);
+        
+        // Campos buscables: código, nombre, descripción, categoría, marca, proveedor
+        $searchableFields = [
+            'codigo',
+            'nombre',
+            'descripcion',
+            'categoria.nombre',
+            'marca.nombre',
+            'proveedor.nombre',
+            'industria.nombre'
+        ];
+        
+        // Aplicar búsqueda
+        $query = $this->applySearch($query, $request, $searchableFields);
+        
+        // Campos ordenables
+        $sortableFields = ['id', 'codigo', 'nombre', 'precio_venta', 'stock', 'created_at'];
+        
+        // Aplicar ordenamiento
+        $query = $this->applySorting($query, $request, $sortableFields, 'id', 'desc');
+        
+        // Aplicar paginación
+        return $this->paginateResponse($query, $request, 15, 100);
     }
 
     public function store(Request $request)

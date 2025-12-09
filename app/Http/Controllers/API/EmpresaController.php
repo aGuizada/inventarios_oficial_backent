@@ -3,16 +3,32 @@
 namespace App\Http\Controllers\API;
 
 use App\Http\Controllers\Controller;
+use App\Http\Traits\HasPagination;
 use App\Models\Empresa;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Storage;
 
 class EmpresaController extends Controller
 {
-    public function index()
+    use HasPagination;
+
+    public function index(Request $request)
     {
-        $empresas = Empresa::all();
-        return response()->json(['data' => $empresas]);
+        $query = Empresa::query();
+
+        $searchableFields = [
+            'id',
+            'nombre',
+            'nit',
+            'direccion',
+            'telefono',
+            'email'
+        ];
+
+        $query = $this->applySearch($query, $request, $searchableFields);
+        $query = $this->applySorting($query, $request, ['id', 'nombre', 'created_at'], 'id', 'desc');
+
+        return $this->paginateResponse($query, $request, 15, 100);
     }
 
     public function store(Request $request)

@@ -3,15 +3,39 @@
 namespace App\Http\Controllers\API;
 
 use App\Http\Controllers\Controller;
+use App\Http\Traits\HasPagination;
 use App\Models\Caja;
 use Illuminate\Http\Request;
 
 class CajaController extends Controller
 {
-    public function index()
+    use HasPagination;
+
+    public function index(Request $request)
     {
-        $cajas = Caja::with(['sucursal', 'user'])->get();
-        return response()->json(['data' => $cajas]);
+        $query = Caja::with(['sucursal', 'user']);
+        
+        // Campos buscables: ID, sucursal, usuario, fechas
+        $searchableFields = [
+            'id',
+            'sucursal.nombre',
+            'user.name',
+            'user.email',
+            'fecha_apertura',
+            'fecha_cierre'
+        ];
+        
+        // Aplicar búsqueda
+        $query = $this->applySearch($query, $request, $searchableFields);
+        
+        // Campos ordenables
+        $sortableFields = ['id', 'fecha_apertura', 'fecha_cierre', 'saldo_inicial', 'estado'];
+        
+        // Aplicar ordenamiento
+        $query = $this->applySorting($query, $request, $sortableFields, 'id', 'desc');
+        
+        // Aplicar paginación
+        return $this->paginateResponse($query, $request, 15, 100);
     }
 
     public function store(Request $request)

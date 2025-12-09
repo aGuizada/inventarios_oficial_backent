@@ -3,15 +3,38 @@
 namespace App\Http\Controllers\API;
 
 use App\Http\Controllers\Controller;
+use App\Http\Traits\HasPagination;
 use App\Models\Proveedor;
 use Illuminate\Http\Request;
 
 class ProveedorController extends Controller
 {
-    public function index()
+    use HasPagination;
+
+    public function index(Request $request)
     {
-        $proveedores = Proveedor::all();
-        return response()->json(['data' => $proveedores]);
+        $query = Proveedor::query();
+        
+        // Campos buscables: nombre, teléfono, email, NIT, dirección
+        $searchableFields = [
+            'nombre',
+            'telefono',
+            'email',
+            'nit',
+            'direccion'
+        ];
+        
+        // Aplicar búsqueda
+        $query = $this->applySearch($query, $request, $searchableFields);
+        
+        // Campos ordenables
+        $sortableFields = ['id', 'nombre', 'email', 'telefono', 'created_at'];
+        
+        // Aplicar ordenamiento
+        $query = $this->applySorting($query, $request, $sortableFields, 'id', 'desc');
+        
+        // Aplicar paginación
+        return $this->paginateResponse($query, $request, 15, 100);
     }
 
     public function store(Request $request)

@@ -3,15 +3,28 @@
 namespace App\Http\Controllers\API;
 
 use App\Http\Controllers\Controller;
+use App\Http\Traits\HasPagination;
 use App\Models\Rol;
 use Illuminate\Http\Request;
 
 class RolController extends Controller
 {
-    public function index()
+    use HasPagination;
+
+    public function index(Request $request)
     {
-        $roles = Rol::all();
-        return response()->json(['data' => $roles]);
+        $query = Rol::query();
+
+        $searchableFields = [
+            'id',
+            'nombre',
+            'descripcion'
+        ];
+
+        $query = $this->applySearch($query, $request, $searchableFields);
+        $query = $this->applySorting($query, $request, ['id', 'nombre', 'created_at'], 'id', 'desc');
+
+        return $this->paginateResponse($query, $request, 15, 100);
     }
 
     public function store(Request $request)
