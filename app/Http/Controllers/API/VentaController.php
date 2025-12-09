@@ -28,16 +28,16 @@ class VentaController extends Controller
     public function productosInventario(Request $request)
     {
         $almacenId = $request->get('almacen_id');
-        
+
         $query = Inventario::with(['articulo', 'almacen'])
             ->where('saldo_stock', '>', 0);
-        
+
         if ($almacenId) {
             $query->where('almacen_id', $almacenId);
         }
-        
+
         $inventarios = $query->get();
-        
+
         // Formatear respuesta con información del artículo y stock disponible
         $productos = $inventarios->map(function ($inventario) {
             return [
@@ -50,7 +50,7 @@ class VentaController extends Controller
                 'almacen' => $inventario->almacen,
             ];
         });
-        
+
         return response()->json($productos);
     }
 
@@ -58,54 +58,55 @@ class VentaController extends Controller
     {
         try {
             $request->validate([
-            'cliente_id' => 'required|exists:clientes,id',
-            'user_id' => 'required|exists:users,id',
-            'tipo_venta_id' => 'required|exists:tipo_ventas,id',
-            'tipo_pago_id' => 'required|exists:tipo_pagos,id',
-            'tipo_comprobante' => 'nullable|string|max:50',
-            'serie_comprobante' => 'nullable|string|max:50',
-            'num_comprobante' => 'nullable|string|max:50',
-            'fecha_hora' => 'required|date',
-            'total' => 'required|numeric',
-            'estado' => 'boolean',
-            'caja_id' => 'nullable|exists:cajas,id',
-            'detalles' => 'required|array',
-            'detalles.*.articulo_id' => 'required|exists:articulos,id',
-            'detalles.*.cantidad' => 'required|integer|min:1',
-            'detalles.*.precio' => 'required|numeric',
-            'detalles.*.descuento' => 'nullable|numeric',
-        ], [
-            'cliente_id.required' => 'El cliente es obligatorio.',
-            'cliente_id.exists' => 'El cliente seleccionado no existe.',
-            'user_id.required' => 'El usuario es obligatorio.',
-            'user_id.exists' => 'El usuario seleccionado no existe.',
-            'tipo_venta_id.required' => 'El tipo de venta es obligatorio.',
-            'tipo_venta_id.exists' => 'El tipo de venta seleccionado no existe.',
-            'tipo_pago_id.required' => 'El tipo de pago es obligatorio.',
-            'tipo_pago_id.exists' => 'El tipo de pago seleccionado no existe.',
-            'tipo_comprobante.string' => 'El tipo de comprobante debe ser una cadena de texto.',
-            'tipo_comprobante.max' => 'El tipo de comprobante no puede tener más de 50 caracteres.',
-            'serie_comprobante.string' => 'La serie del comprobante debe ser una cadena de texto.',
-            'serie_comprobante.max' => 'La serie del comprobante no puede tener más de 50 caracteres.',
-            'num_comprobante.string' => 'El número de comprobante debe ser una cadena de texto.',
-            'num_comprobante.max' => 'El número de comprobante no puede tener más de 50 caracteres.',
-            'fecha_hora.required' => 'La fecha y hora son obligatorias.',
-            'fecha_hora.date' => 'La fecha y hora deben ser una fecha válida.',
-            'total.required' => 'El total es obligatorio.',
-            'total.numeric' => 'El total debe ser un número.',
-            'estado.boolean' => 'El estado debe ser verdadero o falso.',
-            'caja_id.exists' => 'La caja seleccionada no existe.',
-            'detalles.required' => 'Los detalles de la venta son obligatorios.',
-            'detalles.array' => 'Los detalles deben ser un arreglo.',
-            'detalles.*.articulo_id.required' => 'El artículo es obligatorio en los detalles.',
-            'detalles.*.articulo_id.exists' => 'El artículo seleccionado no existe.',
-            'detalles.*.cantidad.required' => 'La cantidad es obligatoria en los detalles.',
-            'detalles.*.cantidad.integer' => 'La cantidad debe ser un número entero.',
-            'detalles.*.cantidad.min' => 'La cantidad debe ser al menos 1.',
-            'detalles.*.precio.required' => 'El precio es obligatorio en los detalles.',
-            'detalles.*.precio.numeric' => 'El precio debe ser un número.',
-            'detalles.*.descuento.numeric' => 'El descuento debe ser un número.',
-        ]);
+                'cliente_id' => 'required|exists:clientes,id',
+                'user_id' => 'required|exists:users,id',
+                'tipo_venta_id' => 'required|exists:tipo_ventas,id',
+                'tipo_pago_id' => 'required|exists:tipo_pagos,id',
+                'tipo_comprobante' => 'nullable|string|max:50',
+                'serie_comprobante' => 'nullable|string|max:50',
+                'num_comprobante' => 'nullable|string|max:50',
+                'fecha_hora' => 'required|date',
+                'total' => 'required|numeric',
+                'estado' => 'boolean',
+                'caja_id' => 'nullable|exists:cajas,id',
+                'detalles' => 'required|array',
+                'detalles.*.articulo_id' => 'required|exists:articulos,id',
+                'detalles.*.cantidad' => 'required|integer|min:1',
+                'detalles.*.precio' => 'required|numeric',
+                'detalles.*.descuento' => 'nullable|numeric',
+                'detalles.*.unidad_medida' => 'nullable|string|in:Unidad,Paquete,Centimetro',
+            ], [
+                'cliente_id.required' => 'El cliente es obligatorio.',
+                'cliente_id.exists' => 'El cliente seleccionado no existe.',
+                'user_id.required' => 'El usuario es obligatorio.',
+                'user_id.exists' => 'El usuario seleccionado no existe.',
+                'tipo_venta_id.required' => 'El tipo de venta es obligatorio.',
+                'tipo_venta_id.exists' => 'El tipo de venta seleccionado no existe.',
+                'tipo_pago_id.required' => 'El tipo de pago es obligatorio.',
+                'tipo_pago_id.exists' => 'El tipo de pago seleccionado no existe.',
+                'tipo_comprobante.string' => 'El tipo de comprobante debe ser una cadena de texto.',
+                'tipo_comprobante.max' => 'El tipo de comprobante no puede tener más de 50 caracteres.',
+                'serie_comprobante.string' => 'La serie del comprobante debe ser una cadena de texto.',
+                'serie_comprobante.max' => 'La serie del comprobante no puede tener más de 50 caracteres.',
+                'num_comprobante.string' => 'El número de comprobante debe ser una cadena de texto.',
+                'num_comprobante.max' => 'El número de comprobante no puede tener más de 50 caracteres.',
+                'fecha_hora.required' => 'La fecha y hora son obligatorias.',
+                'fecha_hora.date' => 'La fecha y hora deben ser una fecha válida.',
+                'total.required' => 'El total es obligatorio.',
+                'total.numeric' => 'El total debe ser un número.',
+                'estado.boolean' => 'El estado debe ser verdadero o falso.',
+                'caja_id.exists' => 'La caja seleccionada no existe.',
+                'detalles.required' => 'Los detalles de la venta son obligatorios.',
+                'detalles.array' => 'Los detalles deben ser un arreglo.',
+                'detalles.*.articulo_id.required' => 'El artículo es obligatorio en los detalles.',
+                'detalles.*.articulo_id.exists' => 'El artículo seleccionado no existe.',
+                'detalles.*.cantidad.required' => 'La cantidad es obligatoria en los detalles.',
+                'detalles.*.cantidad.integer' => 'La cantidad debe ser un número entero.',
+                'detalles.*.cantidad.min' => 'La cantidad debe ser al menos 1.',
+                'detalles.*.precio.required' => 'El precio es obligatorio en los detalles.',
+                'detalles.*.precio.numeric' => 'El precio debe ser un número.',
+                'detalles.*.descuento.numeric' => 'El descuento debe ser un número.',
+            ]);
         } catch (ValidationException $e) {
             return response()->json([
                 'message' => 'Error de validación',
@@ -117,7 +118,7 @@ class VentaController extends Controller
         try {
             // Validar stock disponible antes de crear la venta
             $almacenId = $request->input('almacen_id'); // Necesitamos el almacén para validar stock
-            
+
             if (!$almacenId) {
                 DB::rollBack();
                 return response()->json([
@@ -127,16 +128,16 @@ class VentaController extends Controller
                     ]
                 ], 422);
             }
-            
+
             foreach ($request->detalles as $index => $detalle) {
-                $articuloId = (int)$detalle['articulo_id'];
-                $cantidadVenta = (int)$detalle['cantidad'];
-                
+                $articuloId = (int) $detalle['articulo_id'];
+                $cantidadVenta = (int) $detalle['cantidad'];
+
                 // Buscar inventario del artículo
                 $inventario = Inventario::where('articulo_id', $articuloId)
                     ->where('almacen_id', $almacenId)
                     ->first();
-                
+
                 if (!$inventario) {
                     DB::rollBack();
                     return response()->json([
@@ -146,22 +147,32 @@ class VentaController extends Controller
                         ]
                     ], 422);
                 }
-                
-                if ($inventario->saldo_stock < $cantidadVenta) {
+
+                // Calcular cantidad a deducir según unidad de medida
+                $unidadMedida = $detalle['unidad_medida'] ?? 'Unidad';
+                $articulo = Articulo::find($articuloId);
+                $cantidadDeducir = $cantidadVenta;
+
+                if ($unidadMedida === 'Paquete' && $articulo) {
+                    $cantidadDeducir = $cantidadVenta * ($articulo->unidad_envase > 0 ? $articulo->unidad_envase : 1);
+                } elseif ($unidadMedida === 'Centimetro') {
+                    $cantidadDeducir = $cantidadVenta / 100;
+                }
+
+                if ($inventario->saldo_stock < $cantidadDeducir) {
                     DB::rollBack();
-                    $articulo = Articulo::find($articuloId);
                     return response()->json([
                         'message' => 'Error de validación',
                         'errors' => [
                             "detalles.{$index}.cantidad" => [
-                                "Stock insuficiente. Stock disponible: {$inventario->saldo_stock}, solicitado: {$cantidadVenta}",
+                                "Stock insuficiente. Stock disponible: {$inventario->saldo_stock}, solicitado: {$cantidadDeducir} ({$unidadMedida})",
                                 "Artículo: " . ($articulo ? $articulo->nombre : "ID {$articuloId}")
                             ]
                         ]
                     ], 422);
                 }
             }
-            
+
             $venta = Venta::create($request->except('detalles'));
 
             foreach ($request->detalles as $detalle) {
@@ -171,27 +182,37 @@ class VentaController extends Controller
                     'cantidad' => $detalle['cantidad'],
                     'precio' => $detalle['precio'],
                     'descuento' => $detalle['descuento'] ?? 0,
+                    'unidad_medida' => $detalle['unidad_medida'] ?? 'Unidad',
                 ]);
-                
+
                 // Actualizar inventario (reducir stock)
-                $articuloId = (int)$detalle['articulo_id'];
-                $cantidadVenta = (int)$detalle['cantidad'];
-                
+                $articuloId = (int) $detalle['articulo_id'];
+                $cantidadVenta = (int) $detalle['cantidad'];
+                $unidadMedida = $detalle['unidad_medida'] ?? 'Unidad';
+
                 $inventario = Inventario::where('articulo_id', $articuloId)
                     ->where('almacen_id', $almacenId)
                     ->first();
-                
+
                 if ($inventario) {
-                    $inventario->saldo_stock -= $cantidadVenta;
+                    $articulo = Articulo::find($articuloId);
+                    $cantidadDeducir = $cantidadVenta;
+
+                    if ($unidadMedida === 'Paquete' && $articulo) {
+                        $cantidadDeducir = $cantidadVenta * ($articulo->unidad_envase > 0 ? $articulo->unidad_envase : 1);
+                    } elseif ($unidadMedida === 'Centimetro') {
+                        $cantidadDeducir = $cantidadVenta / 100;
+                    }
+
+                    $inventario->saldo_stock -= $cantidadDeducir;
                     if ($inventario->saldo_stock < 0) {
                         $inventario->saldo_stock = 0;
                     }
                     $inventario->save();
-                    
+
                     // Actualizar stock del artículo (stock general)
-                    $articulo = Articulo::find($articuloId);
                     if ($articulo) {
-                        $articulo->stock -= $cantidadVenta;
+                        $articulo->stock -= $cantidadDeducir;
                         if ($articulo->stock < 0) {
                             $articulo->stock = 0;
                         }
@@ -204,25 +225,25 @@ class VentaController extends Controller
             if ($venta->caja_id) {
                 $caja = Caja::find($venta->caja_id);
                 if ($caja) {
-                    $totalVenta = (float)$venta->total;
-                    
+                    $totalVenta = (float) $venta->total;
+
                     // Obtener tipo de venta y tipo de pago
                     $tipoVenta = TipoVenta::find($venta->tipo_venta_id);
                     $tipoPago = TipoPago::find($venta->tipo_pago_id);
-                    
+
                     $nombreTipoVenta = $tipoVenta ? strtolower(trim($tipoVenta->nombre_tipo_ventas)) : '';
                     $nombreTipoPago = $tipoPago ? strtolower(trim($tipoPago->nombre_tipo_pago)) : '';
-                    
+
                     // Actualizar ventas totales
                     $caja->ventas = ($caja->ventas ?? 0) + $totalVenta;
-                    
+
                     // Actualizar ventas por tipo (contado o crédito)
                     if (strpos($nombreTipoVenta, 'contado') !== false) {
                         $caja->ventas_contado = ($caja->ventas_contado ?? 0) + $totalVenta;
                     } elseif (strpos($nombreTipoVenta, 'crédito') !== false || strpos($nombreTipoVenta, 'credito') !== false) {
                         $caja->ventas_credito = ($caja->ventas_credito ?? 0) + $totalVenta;
                     }
-                    
+
                     // Actualizar pagos por método de pago
                     if (strpos($nombreTipoPago, 'efectivo') !== false) {
                         $caja->pagos_efectivo = ($caja->pagos_efectivo ?? 0) + $totalVenta;
@@ -231,7 +252,7 @@ class VentaController extends Controller
                     } elseif (strpos($nombreTipoPago, 'transferencia') !== false) {
                         $caja->pagos_transferencia = ($caja->pagos_transferencia ?? 0) + $totalVenta;
                     }
-                    
+
                     $caja->save();
                 }
             }
@@ -259,14 +280,14 @@ class VentaController extends Controller
     public function show($id)
     {
         $venta = Venta::find($id);
-        
+
         if (!$venta) {
             return response()->json([
                 'message' => 'Venta no encontrada',
                 'error' => "No se encontró una venta con el ID: {$id}"
             ], 404);
         }
-        
+
         $venta->load(['cliente', 'user', 'tipoVenta', 'tipoPago', 'caja', 'detalles.articulo']);
         return response()->json($venta);
     }
@@ -274,14 +295,14 @@ class VentaController extends Controller
     public function update(Request $request, $id)
     {
         $venta = Venta::find($id);
-        
+
         if (!$venta) {
             return response()->json([
                 'message' => 'Venta no encontrada',
                 'error' => "No se encontró una venta con el ID: {$id}"
             ], 404);
         }
-        
+
         $request->validate([
             'cliente_id' => 'required|exists:clientes,id',
             'user_id' => 'required|exists:users,id',
@@ -325,14 +346,14 @@ class VentaController extends Controller
     public function destroy($id)
     {
         $venta = Venta::find($id);
-        
+
         if (!$venta) {
             return response()->json([
                 'message' => 'Venta no encontrada',
                 'error' => "No se encontró una venta con el ID: {$id}"
             ], 404);
         }
-        
+
         $venta->delete();
         return response()->json(null, 204);
     }
