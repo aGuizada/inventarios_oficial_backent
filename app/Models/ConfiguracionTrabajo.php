@@ -33,6 +33,12 @@ class ConfiguracionTrabajo extends Model
         'moneda_venta_id',
         'moneda_compra_id',
         'tiempo_min_caducidad_articulo',
+        'mostrar_costo_unitario',
+        'mostrar_costo_paquete',
+        'mostrar_costo_compra',
+        'mostrar_precios_adicionales',
+        'mostrar_vencimiento',
+        'mostrar_stock',
     ];
 
     public function monedaPrincipal()
