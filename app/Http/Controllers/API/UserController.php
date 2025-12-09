@@ -3,16 +3,33 @@
 namespace App\Http\Controllers\API;
 
 use App\Http\Controllers\Controller;
+use App\Http\Traits\HasPagination;
 use App\Models\User;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
 
 class UserController extends Controller
 {
-    public function index()
+    use HasPagination;
+
+    public function index(Request $request)
     {
-        $users = User::with(['rol', 'sucursal'])->get();
-        return response()->json(['data' => $users]);
+        $query = User::with(['rol', 'sucursal']);
+
+        $searchableFields = [
+            'id',
+            'name',
+            'email',
+            'usuario',
+            'telefono',
+            'rol.nombre',
+            'sucursal.nombre'
+        ];
+
+        $query = $this->applySearch($query, $request, $searchableFields);
+        $query = $this->applySorting($query, $request, ['id', 'name', 'email', 'created_at'], 'id', 'desc');
+
+        return $this->paginateResponse($query, $request, 15, 100);
     }
 
     public function store(Request $request)

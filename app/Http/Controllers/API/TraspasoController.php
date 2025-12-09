@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\API;
 
 use App\Http\Controllers\Controller;
+use App\Http\Traits\HasPagination;
 use App\Models\Traspaso;
 use App\Models\DetalleTraspaso;
 use App\Models\Inventario;
@@ -11,9 +12,11 @@ use Illuminate\Support\Facades\DB;
 
 class TraspasoController extends Controller
 {
-    public function index()
+    use HasPagination;
+
+    public function index(Request $request)
     {
-        $traspasos = Traspaso::with([
+        $query = Traspaso::with([
             'sucursalOrigen',
             'sucursalDestino',
             'almacenOrigen',
@@ -21,9 +24,24 @@ class TraspasoController extends Controller
             'user',
             'usuarioAprobador',
             'usuarioReceptor',
-            'detalles'
-        ])->get();
-        return response()->json($traspasos);
+            'detalles.articulo'
+        ]);
+
+        $searchableFields = [
+            'id',
+            'codigo_traspaso',
+            'tipo_traspaso',
+            'estado',
+            'motivo',
+            'sucursalOrigen.nombre',
+            'sucursalDestino.nombre',
+            'user.name'
+        ];
+
+        $query = $this->applySearch($query, $request, $searchableFields);
+        $query = $this->applySorting($query, $request, ['id', 'fecha_solicitud', 'codigo_traspaso', 'estado'], 'id', 'desc');
+
+        return $this->paginateResponse($query, $request, 15, 100);
     }
 
     public function store(Request $request)

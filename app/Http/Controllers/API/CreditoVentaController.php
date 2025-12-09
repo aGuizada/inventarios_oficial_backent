@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\API;
 
 use App\Http\Controllers\Controller;
+use App\Http\Traits\HasPagination;
 use App\Models\CreditoVenta;
 use App\Models\CuotaCredito;
 use Illuminate\Http\Request;
@@ -10,14 +11,25 @@ use Carbon\Carbon;
 
 class CreditoVentaController extends Controller
 {
-    public function index()
+    use HasPagination;
+
+    public function index(Request $request)
     {
         try {
-            $creditoVentas = CreditoVenta::with(['venta.cliente', 'venta.detalles.articulo', 'cliente', 'cuotas'])->get();
-            return response()->json([
-                'success' => true,
-                'data' => $creditoVentas
-            ]);
+            $query = CreditoVenta::with(['venta.cliente', 'venta.detalles.articulo', 'cliente', 'cuotas']);
+
+            $searchableFields = [
+                'id',
+                'estado',
+                'cliente.nombre',
+                'cliente.num_documento',
+                'venta.num_comprobante'
+            ];
+
+            $query = $this->applySearch($query, $request, $searchableFields);
+            $query = $this->applySorting($query, $request, ['id', 'created_at', 'estado'], 'id', 'desc');
+
+            return $this->paginateResponse($query, $request, 15, 100);
         } catch (\Exception $e) {
             \Log::error('Error al obtener créditos venta:', [
                 'message' => $e->getMessage()

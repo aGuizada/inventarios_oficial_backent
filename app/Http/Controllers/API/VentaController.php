@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\API;
 
 use App\Http\Controllers\Controller;
+use App\Http\Traits\HasPagination;
 use App\Models\Venta;
 use App\Models\DetalleVenta;
 use App\Models\Inventario;
@@ -16,10 +17,41 @@ use Illuminate\Validation\ValidationException;
 
 class VentaController extends Controller
 {
-    public function index()
+    use HasPagination;
+
+    public function index(Request $request)
     {
-        $ventas = Venta::with(['cliente', 'user', 'tipoVenta', 'tipoPago', 'caja', 'detalles.articulo'])->get();
-        return response()->json($ventas);
+        try {
+            $query = Venta::with(['cliente', 'user', 'tipoVenta', 'tipoPago', 'caja', 'detalles.articulo']);
+
+            $searchableFields = [
+                'id',
+                'num_comprobante',
+                'serie_comprobante',
+                'tipo_comprobante',
+                'cliente.nombre',
+                'cliente.num_documento',
+                'user.name'
+            ];
+
+            $query = $this->applySearch($query, $request, $searchableFields);
+            $query = $this->applySorting($query, $request, ['id', 'fecha_hora', 'total', 'num_comprobante'], 'id', 'desc');
+
+            return $this->paginateResponse($query, $request, 15, 100);
+        } catch (\Exception $e) {
+            \Log::error('Error en VentaController@index', [
+                'message' => $e->getMessage(),
+                'file' => $e->getFile(),
+                'line' => $e->getLine(),
+                'trace' => $e->getTraceAsString()
+            ]);
+            
+            return response()->json([
+                'success' => false,
+                'message' => 'Error al cargar las ventas',
+                'error' => $e->getMessage()
+            ], 500);
+        }
     }
 
     /**

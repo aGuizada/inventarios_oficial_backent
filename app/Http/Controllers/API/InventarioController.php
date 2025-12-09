@@ -3,15 +3,32 @@
 namespace App\Http\Controllers\API;
 
 use App\Http\Controllers\Controller;
+use App\Http\Traits\HasPagination;
 use App\Models\Inventario;
 use Illuminate\Http\Request;
 
 class InventarioController extends Controller
 {
-    public function index()
+    use HasPagination;
+
+    public function index(Request $request)
     {
-        $inventarios = Inventario::with(['almacen', 'articulo'])->get();
-        return response()->json($inventarios);
+        $query = Inventario::with(['almacen', 'articulo']);
+
+        $searchableFields = [
+            'id',
+            'cantidad',
+            'saldo_stock',
+            'ubicacion',
+            'articulo.codigo',
+            'articulo.nombre',
+            'almacen.nombre_almacen'
+        ];
+
+        $query = $this->applySearch($query, $request, $searchableFields);
+        $query = $this->applySorting($query, $request, ['id', 'cantidad', 'saldo_stock', 'created_at'], 'id', 'desc');
+
+        return $this->paginateResponse($query, $request, 15, 100);
     }
 
     public function store(Request $request)

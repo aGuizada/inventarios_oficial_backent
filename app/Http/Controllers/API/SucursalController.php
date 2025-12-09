@@ -3,15 +3,34 @@
 namespace App\Http\Controllers\API;
 
 use App\Http\Controllers\Controller;
+use App\Http\Traits\HasPagination;
 use App\Models\Sucursal;
 use Illuminate\Http\Request;
 
 class SucursalController extends Controller
 {
-    public function index()
+    use HasPagination;
+
+    public function index(Request $request)
     {
-        $sucursales = Sucursal::with('empresa')->get();
-        return response()->json(['data' => $sucursales]);
+        $query = Sucursal::with('empresa');
+
+        $searchableFields = [
+            'id',
+            'nombre',
+            'codigoSucursal',
+            'direccion',
+            'correo',
+            'telefono',
+            'departamento',
+            'responsable',
+            'empresa.nombre'
+        ];
+
+        $query = $this->applySearch($query, $request, $searchableFields);
+        $query = $this->applySorting($query, $request, ['id', 'nombre', 'codigoSucursal', 'created_at'], 'id', 'desc');
+
+        return $this->paginateResponse($query, $request, 15, 100);
     }
 
     public function store(Request $request)
