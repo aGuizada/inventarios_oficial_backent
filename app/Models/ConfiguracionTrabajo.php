@@ -39,6 +39,7 @@ class ConfiguracionTrabajo extends Model
         'mostrar_precios_adicionales',
         'mostrar_vencimiento',
         'mostrar_stock',
+        'empresa_id',
     ];
 
     public function monedaPrincipal()
@@ -54,5 +55,10 @@ class ConfiguracionTrabajo extends Model
     public function monedaCompra()
     {
         return $this->belongsTo(Moneda::class, 'moneda_compra_id');
+    }
+
+    public function empresa()
+    {
+        return $this->belongsTo(Empresa::class);
     }
 }
