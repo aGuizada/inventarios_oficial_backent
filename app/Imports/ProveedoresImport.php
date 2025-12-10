@@ -29,13 +29,39 @@ class ProveedoresImport implements ToModel, WithHeadingRow, WithValidation, Skip
 
         return new Proveedor([
             'nombre' => $row['nombre'],
-            'telefono' => isset($row['telefono']) ? (string) $row['telefono'] : null,
-            'email' => isset($row['email']) ? (string) $row['email'] : null,
-            'nit' => isset($row['nit']) ? (string) $row['nit'] : null,
-            'direccion' => isset($row['direccion']) ? (string) $row['direccion'] : null,
-            'tipo_proveedor' => isset($row['tipo_proveedor']) ? (string) $row['tipo_proveedor'] : null,
+            'telefono' => $row['telefono'] ?? null,
+            'email' => $row['email'] ?? null,
+            'nit' => $row['nit'] ?? null,
+            'direccion' => $row['direccion'] ?? null,
+            'tipo_proveedor' => $row['tipo_proveedor'] ?? null,
             'estado' => $row['estado'] ?? 1,
         ]);
+    }
+
+    /**
+     * Prepara los datos antes de la validación
+     * Convierte campos numéricos a string
+     */
+    public function prepareForValidation($data, $index)
+    {
+        // Convertir campos que deben ser string
+        if (isset($data['telefono'])) {
+            $data['telefono'] = (string) $data['telefono'];
+        }
+        if (isset($data['nit'])) {
+            $data['nit'] = (string) $data['nit'];
+        }
+        if (isset($data['email'])) {
+            $data['email'] = (string) $data['email'];
+        }
+        if (isset($data['direccion'])) {
+            $data['direccion'] = (string) $data['direccion'];
+        }
+        if (isset($data['tipo_proveedor'])) {
+            $data['tipo_proveedor'] = (string) $data['tipo_proveedor'];
+        }
+
+        return $data;
     }
 
     /**

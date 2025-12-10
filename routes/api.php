@@ -107,6 +107,8 @@ Route::apiResource('empresas', EmpresaController::class);
 Route::apiResource('industrias', IndustriaController::class);
 
 // Inventarios
+Route::get('inventarios/por-item', [InventarioController::class, 'porItem']);
+Route::get('inventarios/por-lotes', [InventarioController::class, 'porLotes']);
 Route::apiResource('inventarios', InventarioController::class);
 
 // Marcas
