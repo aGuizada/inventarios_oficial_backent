@@ -6,6 +6,9 @@ use App\Http\Controllers\Controller;
 use App\Http\Traits\HasPagination;
 use App\Models\Proveedor;
 use Illuminate\Http\Request;
+use Maatwebsite\Excel\Excel as ExcelService;
+use App\Exports\ProveedoresExport;
+use App\Imports\ProveedoresImport;
 
 class ProveedorController extends Controller
 {
@@ -14,7 +17,7 @@ class ProveedorController extends Controller
     public function index(Request $request)
     {
         $query = Proveedor::query();
-        
+
         // Campos buscables: nombre, teléfono, email, NIT, dirección
         $searchableFields = [
             'nombre',
@@ -23,16 +26,16 @@ class ProveedorController extends Controller
             'nit',
             'direccion'
         ];
-        
+
         // Aplicar búsqueda
         $query = $this->applySearch($query, $request, $searchableFields);
-        
+
         // Campos ordenables
         $sortableFields = ['id', 'nombre', 'email', 'telefono', 'created_at'];
-        
+
         // Aplicar ordenamiento
         $query = $this->applySorting($query, $request, $sortableFields, 'id', 'desc');
-        
+
         // Aplicar paginación
         return $this->paginateResponse($query, $request, 15, 100);
     }
@@ -80,5 +83,84 @@ class ProveedorController extends Controller
     {
         $proveedor->delete();
         return response()->json(null, 204);
+    }
+
+    /**
+     * Descarga plantilla Excel para importar proveedores
+     *
+     * @return \Symfony\Component\HttpFoundation\BinaryFileResponse
+     */
+    public function downloadTemplate()
+    {
+        $excel = app(ExcelService::class);
+        return $excel->download(new ProveedoresExport(), 'plantilla_proveedores.xlsx');
+    }
+
+    /**
+     * Importa proveedores desde un archivo Excel
+     *
+     * @param Request $request
+     * @return \Illuminate\Http\JsonResponse
+     */
+    public function import(Request $request)
+    {
+        $request->validate([
+            'file' => 'required|file|mimes:xlsx,xls|max:10240', // Max 10MB
+        ]);
+
+        try {
+            $import = new ProveedoresImport();
+            $excel = app(ExcelService::class);
+            $excel->import($import, $request->file('file'));
+
+            $errors = [];
+
+            // Obtener errores de validación
+            foreach ($import->failures() as $failure) {
+                $errors[] = [
+                    'fila' => $failure->row(),
+                    'atributo' => $failure->attribute(),
+                    'errores' => $failure->errors(),
+                    'valores' => $failure->values(),
+                ];
+            }
+
+            $importedCount = $import->getImportedCount();
+            $skippedCount = $import->getSkippedCount();
+
+            return response()->json([
+                'message' => 'Importación completada',
+                'data' => [
+                    'total_procesadas' => $importedCount + $skippedCount,
+                    'importadas_exitosamente' => $importedCount,
+                    'filas_con_errores' => $skippedCount,
+                    'errores' => $errors,
+                ],
+            ], 200);
+
+        } catch (\Maatwebsite\Excel\Validators\ValidationException $e) {
+            $failures = $e->failures();
+            $errors = [];
+
+            foreach ($failures as $failure) {
+                $errors[] = [
+                    'fila' => $failure->row(),
+                    'atributo' => $failure->attribute(),
+                    'errores' => $failure->errors(),
+                    'valores' => $failure->values(),
+                ];
+            }
+
+            return response()->json([
+                'message' => 'Error de validación en el archivo',
+                'errors' => $errors,
+            ], 422);
+
+        } catch (\Exception $e) {
+            return response()->json([
+                'message' => 'Error al procesar el archivo',
+                'error' => $e->getMessage(),
+            ], 500);
+        }
     }
 }

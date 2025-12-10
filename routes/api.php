@@ -123,6 +123,8 @@ Route::apiResource('notificaciones', NotificationController::class);
 Route::apiResource('precios', PrecioController::class);
 
 // Proveedores
+Route::get('proveedores/template/download', [ProveedorController::class, 'downloadTemplate']);
+Route::post('proveedores/import', [ProveedorController::class, 'import']);
 Route::apiResource('proveedores', ProveedorController::class);
 
 // Roles
