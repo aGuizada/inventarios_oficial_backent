@@ -20,6 +20,8 @@ class DetalleCompra extends Model
         'precio',
     ];
 
+    protected $appends = ['precio_unitario', 'subtotal'];
+
     public function compraBase()
     {
         return $this->belongsTo(CompraBase::class);
@@ -28,5 +30,18 @@ class DetalleCompra extends Model
     public function articulo()
     {
         return $this->belongsTo(Articulo::class);
+    }
+
+    // Accessor para mapear 'precio' a 'precio_unitario' para el frontend
+    public function getPrecioUnitarioAttribute()
+    {
+        return $this->precio;
+    }
+
+    // Accessor para calcular el subtotal
+    public function getSubtotalAttribute()
+    {
+        $subtotal = ($this->precio * $this->cantidad) - ($this->descuento ?? 0);
+        return round($subtotal, 2);
     }
 }
