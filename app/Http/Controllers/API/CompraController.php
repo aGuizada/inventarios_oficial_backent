@@ -8,6 +8,7 @@ use App\Models\CompraBase;
 use App\Models\DetalleCompra;
 use App\Models\CompraContado;
 use App\Models\CompraCredito;
+use App\Models\CompraCuota;
 use App\Models\Proveedor;
 use App\Models\Articulo;
 use App\Models\Caja;
@@ -22,7 +23,7 @@ class CompraController extends Controller
     public function index(Request $request)
     {
         try {
-            $query = CompraBase::with(['proveedor', 'user', 'almacen', 'caja', 'detalles.articulo']);
+            $query = CompraBase::with(['proveedor', 'user', 'almacen', 'caja', 'detalles.articulo', 'compraContado', 'compraCredito.cuotas']);
 
             $searchableFields = [
                 'id',
@@ -275,7 +276,10 @@ class CompraController extends Controller
                 ]);
             }
 
-            if ($request->tipo_compra === 'contado') {
+            // Usar el valor ya convertido a mayúsculas de $compraData
+            $tipoCompra = strtoupper(trim($compraData['tipo_compra'] ?? $request->tipo_compra ?? 'CONTADO'));
+            
+            if ($tipoCompra === 'CONTADO') {
                 CompraContado::create([
                     'id' => $compraBase->id,
                     'fecha_pago' => $compraData['fecha_hora'],
@@ -284,16 +288,116 @@ class CompraController extends Controller
                 ]);
             } else {
                 // Para crédito, necesitamos los campos correctos
-                CompraCredito::create([
+                $numCuotas = (int)($request->numero_cuotas ?? 1);
+                $cuotaInicial = (float)($request->monto_pagado ?? 0);
+                $frecuenciaDias = 30; // Valor por defecto (mensual)
+                
+                \Log::info('Datos recibidos para crédito', [
+                    'numero_cuotas_request' => $request->numero_cuotas,
+                    'numero_cuotas_convertido' => $numCuotas,
+                    'monto_pagado_request' => $request->monto_pagado,
+                    'monto_pagado_convertido' => $cuotaInicial,
+                    'tipo_compra' => $tipoCompra
+                ]);
+                
+                // Validar que numero_cuotas sea válido
+                if ($numCuotas < 1) {
+                    DB::rollBack();
+                    return response()->json([
+                        'success' => false,
+                        'message' => 'El número de cuotas debe ser mayor a 0'
+                    ], 400);
+                }
+                
+                $compraCredito = CompraCredito::create([
                     'id' => $compraBase->id,
-                    'num_cuotas' => $request->numero_cuotas ?? 1,
-                    'frecuencia_dias' => 30, // Valor por defecto (mensual)
-                    'cuota_inicial' => $request->monto_pagado ?? 0,
+                    'num_cuotas' => $numCuotas,
+                    'frecuencia_dias' => $frecuenciaDias,
+                    'cuota_inicial' => $cuotaInicial,
                     'tipo_pago_cuota' => null,
                     'dias_gracia' => 0,
                     'interes_moratorio' => 0.00,
                     'estado_credito' => 'Pendiente',
                 ]);
+
+                // Calcular el saldo pendiente (total - cuota inicial)
+                $totalCompra = (float)$compraBase->total;
+                $saldoPendiente = $totalCompra - (float)$cuotaInicial;
+                
+                \Log::info('Creando cuotas para compra a crédito', [
+                    'compra_id' => $compraBase->id,
+                    'compra_credito_id' => $compraCredito->id,
+                    'total_compra' => $totalCompra,
+                    'cuota_inicial' => $cuotaInicial,
+                    'saldo_pendiente' => $saldoPendiente,
+                    'num_cuotas' => $numCuotas
+                ]);
+                
+                // Solo crear cuotas si hay saldo pendiente
+                if ($saldoPendiente > 0 && $numCuotas > 0) {
+                    // Calcular el monto por cuota (redondeado a 2 decimales)
+                    $montoPorCuota = round($saldoPendiente / $numCuotas, 2);
+                    
+                    // Crear las cuotas
+                    $fechaBase = \Carbon\Carbon::parse($compraData['fecha_hora']);
+                    $totalCuotasCreadas = 0; // Para rastrear el total y ajustar la última cuota
+                    
+                    \Log::info('Iniciando creación de cuotas', [
+                        'monto_por_cuota' => $montoPorCuota,
+                        'fecha_base' => $fechaBase->format('Y-m-d'),
+                        'frecuencia_dias' => $frecuenciaDias
+                    ]);
+                    
+                    for ($i = 1; $i <= $numCuotas; $i++) {
+                        // Calcular fecha de vencimiento (fecha base + (número de cuota * frecuencia en días))
+                        $fechaVencimiento = $fechaBase->copy()->addDays($i * $frecuenciaDias);
+                        
+                        // Para la última cuota, ajustar el monto para asegurar que la suma sea exacta
+                        if ($i === $numCuotas) {
+                            // La última cuota = saldo pendiente - suma de las cuotas anteriores
+                            $montoCuota = round($saldoPendiente - ($montoPorCuota * ($numCuotas - 1)), 2);
+                        } else {
+                            $montoCuota = $montoPorCuota;
+                        }
+                        
+                        $totalCuotasCreadas += $montoCuota;
+                        
+                        $cuotaCreada = CompraCuota::create([
+                            'compra_credito_id' => $compraCredito->id,
+                            'numero_cuota' => $i,
+                            'fecha_vencimiento' => $fechaVencimiento->format('Y-m-d'),
+                            'monto_cuota' => $montoCuota,
+                            'monto_pagado' => 0,
+                            'saldo_pendiente' => $montoCuota,
+                            'fecha_pago' => null,
+                            'estado' => 'Pendiente',
+                        ]);
+                        
+                        \Log::info('Cuota creada', [
+                            'cuota_id' => $cuotaCreada->id,
+                            'numero_cuota' => $i,
+                            'monto_cuota' => $montoCuota,
+                            'fecha_vencimiento' => $fechaVencimiento->format('Y-m-d')
+                        ]);
+                    }
+                    
+                    \Log::info('Cuotas creadas para compra a crédito', [
+                        'compra_credito_id' => $compraCredito->id,
+                        'num_cuotas' => $numCuotas,
+                        'total_compra' => $totalCompra,
+                        'cuota_inicial' => $cuotaInicial,
+                        'saldo_pendiente' => $saldoPendiente,
+                        'monto_por_cuota' => $montoPorCuota,
+                        'total_cuotas_creadas' => $totalCuotasCreadas,
+                        'diferencia' => abs($saldoPendiente - $totalCuotasCreadas)
+                    ]);
+                } else {
+                    \Log::info('No se crearon cuotas - saldo pendiente es 0 o número de cuotas es 0', [
+                        'compra_credito_id' => $compraCredito->id,
+                        'saldo_pendiente' => $saldoPendiente,
+                        'num_cuotas' => $numCuotas
+                    ]);
+                }
             }
 
             // Actualizar la caja con la información de la compra
@@ -379,8 +483,12 @@ class CompraController extends Controller
             }
 
             DB::commit();
-            $compraBase->load('detalles');
-            return response()->json($compraBase, 201);
+            $compraBase->load(['detalles.articulo', 'proveedor', 'user', 'almacen', 'caja', 'compraContado', 'compraCredito.cuotas']);
+            return response()->json([
+                'success' => true,
+                'message' => 'Compra creada exitosamente',
+                'data' => $compraBase
+            ], 201);
         } catch (\Exception $e) {
             DB::rollBack();
             \Log::error('Error al crear compra', [
@@ -401,7 +509,10 @@ class CompraController extends Controller
     public function show(CompraBase $compra)
     {
         $compra->load(['proveedor', 'user', 'almacen', 'caja', 'detalles.articulo', 'compraContado', 'compraCredito']);
-        return response()->json($compra);
+        return response()->json([
+            'success' => true,
+            'data' => $compra
+        ]);
     }
 
     public function update(Request $request, $id)

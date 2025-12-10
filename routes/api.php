@@ -83,6 +83,8 @@ Route::apiResource('compras', CompraController::class);
 
 // Cuotas de Compra
 Route::apiResource('compra-cuotas', CompraCuotaController::class);
+Route::post('compra-cuotas/{id}/pagar', [CompraCuotaController::class, 'pagarCuota']);
+Route::get('compra-cuotas/compra-credito/{compraCreditoId}', [CompraCuotaController::class, 'getByCompraCredito']);
 
 // Configuración de Trabajo
 Route::apiResource('configuracion-trabajo', ConfiguracionTrabajoController::class);
