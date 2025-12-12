@@ -2,7 +2,7 @@
 
 namespace App\Exports;
 
-use App\Models\Proveedor;
+use App\Models\Cliente;
 use Maatwebsite\Excel\Concerns\FromCollection;
 use Maatwebsite\Excel\Concerns\WithHeadings;
 use Maatwebsite\Excel\Concerns\WithStyles;
@@ -10,20 +10,19 @@ use Maatwebsite\Excel\Concerns\WithColumnWidths;
 use Maatwebsite\Excel\Concerns\WithTitle;
 use PhpOffice\PhpSpreadsheet\Worksheet\Worksheet;
 
-class ProveedoresExport implements FromCollection, WithHeadings, WithStyles, WithColumnWidths, WithTitle
+class ClientesExport implements FromCollection, WithHeadings, WithStyles, WithColumnWidths, WithTitle
 {
     public function collection()
     {
-        return Proveedor::all()
-            ->map(function ($proveedor) {
+        return Cliente::all()
+            ->map(function ($cliente) {
                 return [
-                    'nombre' => $proveedor->nombre,
-                    'telefono' => $proveedor->telefono ?? 'N/A',
-                    'email' => $proveedor->email ?? 'N/A',
-                    'nit' => $proveedor->nit ?? 'N/A',
-                    'direccion' => $proveedor->direccion ?? 'N/A',
-                    'tipo_proveedor' => $proveedor->tipo_proveedor ?? 'General',
-                    'estado' => $proveedor->estado ? 'Activo' : 'Inactivo',
+                    'nombre' => $cliente->nombre,
+                    'documento' => $cliente->documento ?? 'N/A',
+                    'telefono' => $cliente->telefono ?? 'N/A',
+                    'email' => $cliente->email ?? 'N/A',
+                    'direccion' => $cliente->direccion ?? 'N/A',
+                    'tipo_cliente' => $cliente->tipo_cliente ?? 'General',
                 ];
             });
     }
@@ -32,12 +31,11 @@ class ProveedoresExport implements FromCollection, WithHeadings, WithStyles, Wit
     {
         return [
             'Nombre',
+            'Documento',
             'Teléfono',
             'Email',
-            'NIT',
             'Dirección',
-            'Tipo Proveedor',
-            'Estado',
+            'Tipo Cliente',
         ];
     }
 
@@ -58,17 +56,16 @@ class ProveedoresExport implements FromCollection, WithHeadings, WithStyles, Wit
     {
         return [
             'A' => 30,
-            'B' => 15,
-            'C' => 25,
-            'D' => 15,
-            'E' => 35,
+            'B' => 20,
+            'C' => 20,
+            'D' => 30,
+            'E' => 40,
             'F' => 20,
-            'G' => 12,
         ];
     }
 
     public function title(): string
     {
-        return 'Proveedores';
+        return 'Clientes';
     }
 }

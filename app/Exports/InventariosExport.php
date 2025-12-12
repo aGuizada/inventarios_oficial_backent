@@ -2,7 +2,7 @@
 
 namespace App\Exports;
 
-use App\Models\Proveedor;
+use App\Models\Inventario;
 use Maatwebsite\Excel\Concerns\FromCollection;
 use Maatwebsite\Excel\Concerns\WithHeadings;
 use Maatwebsite\Excel\Concerns\WithStyles;
@@ -10,20 +10,20 @@ use Maatwebsite\Excel\Concerns\WithColumnWidths;
 use Maatwebsite\Excel\Concerns\WithTitle;
 use PhpOffice\PhpSpreadsheet\Worksheet\Worksheet;
 
-class ProveedoresExport implements FromCollection, WithHeadings, WithStyles, WithColumnWidths, WithTitle
+class InventariosExport implements FromCollection, WithHeadings, WithStyles, WithColumnWidths, WithTitle
 {
     public function collection()
     {
-        return Proveedor::all()
-            ->map(function ($proveedor) {
+        return Inventario::with(['articulo', 'almacen'])
+            ->get()
+            ->map(function ($inv) {
                 return [
-                    'nombre' => $proveedor->nombre,
-                    'telefono' => $proveedor->telefono ?? 'N/A',
-                    'email' => $proveedor->email ?? 'N/A',
-                    'nit' => $proveedor->nit ?? 'N/A',
-                    'direccion' => $proveedor->direccion ?? 'N/A',
-                    'tipo_proveedor' => $proveedor->tipo_proveedor ?? 'General',
-                    'estado' => $proveedor->estado ? 'Activo' : 'Inactivo',
+                    'articulo' => $inv->articulo->nombre ?? 'N/A',
+                    'codigo' => $inv->articulo->codigo ?? 'N/A',
+                    'almacen' => $inv->almacen->nombre_almacen ?? 'N/A',
+                    'stock' => $inv->saldo_stock,
+                    'costo_unitario' => $inv->articulo->precio_costo_unid ?? 0,
+                    'valor_total' => $inv->saldo_stock * ($inv->articulo->precio_costo_unid ?? 0),
                 ];
             });
     }
@@ -31,13 +31,12 @@ class ProveedoresExport implements FromCollection, WithHeadings, WithStyles, Wit
     public function headings(): array
     {
         return [
-            'Nombre',
-            'Teléfono',
-            'Email',
-            'NIT',
-            'Dirección',
-            'Tipo Proveedor',
-            'Estado',
+            'Artículo',
+            'Código',
+            'Almacén',
+            'Stock Actual',
+            'Costo Unitario',
+            'Valor Total',
         ];
     }
 
@@ -57,18 +56,17 @@ class ProveedoresExport implements FromCollection, WithHeadings, WithStyles, Wit
     public function columnWidths(): array
     {
         return [
-            'A' => 30,
+            'A' => 35,
             'B' => 15,
             'C' => 25,
             'D' => 15,
-            'E' => 35,
-            'F' => 20,
-            'G' => 12,
+            'E' => 15,
+            'F' => 15,
         ];
     }
 
     public function title(): string
     {
-        return 'Proveedores';
+        return 'Inventario';
     }
 }

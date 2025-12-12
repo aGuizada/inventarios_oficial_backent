@@ -2,7 +2,7 @@
 
 namespace App\Exports;
 
-use App\Models\Proveedor;
+use App\Models\User;
 use Maatwebsite\Excel\Concerns\FromCollection;
 use Maatwebsite\Excel\Concerns\WithHeadings;
 use Maatwebsite\Excel\Concerns\WithStyles;
@@ -10,20 +10,19 @@ use Maatwebsite\Excel\Concerns\WithColumnWidths;
 use Maatwebsite\Excel\Concerns\WithTitle;
 use PhpOffice\PhpSpreadsheet\Worksheet\Worksheet;
 
-class ProveedoresExport implements FromCollection, WithHeadings, WithStyles, WithColumnWidths, WithTitle
+class UsuariosExport implements FromCollection, WithHeadings, WithStyles, WithColumnWidths, WithTitle
 {
     public function collection()
     {
-        return Proveedor::all()
-            ->map(function ($proveedor) {
+        return User::with('rol')
+            ->get()
+            ->map(function ($user) {
                 return [
-                    'nombre' => $proveedor->nombre,
-                    'telefono' => $proveedor->telefono ?? 'N/A',
-                    'email' => $proveedor->email ?? 'N/A',
-                    'nit' => $proveedor->nit ?? 'N/A',
-                    'direccion' => $proveedor->direccion ?? 'N/A',
-                    'tipo_proveedor' => $proveedor->tipo_proveedor ?? 'General',
-                    'estado' => $proveedor->estado ? 'Activo' : 'Inactivo',
+                    'nombre' => $user->name,
+                    'email' => $user->email,
+                    'rol' => $user->rol->nombre ?? 'N/A',
+                    'estado' => $user->estado ? 'Activo' : 'Inactivo',
+                    'fecha_creacion' => $user->created_at->format('d/m/Y'),
                 ];
             });
     }
@@ -32,12 +31,10 @@ class ProveedoresExport implements FromCollection, WithHeadings, WithStyles, Wit
     {
         return [
             'Nombre',
-            'Teléfono',
             'Email',
-            'NIT',
-            'Dirección',
-            'Tipo Proveedor',
+            'Rol',
             'Estado',
+            'Fecha Creación',
         ];
     }
 
@@ -58,17 +55,15 @@ class ProveedoresExport implements FromCollection, WithHeadings, WithStyles, Wit
     {
         return [
             'A' => 30,
-            'B' => 15,
-            'C' => 25,
+            'B' => 35,
+            'C' => 20,
             'D' => 15,
-            'E' => 35,
-            'F' => 20,
-            'G' => 12,
+            'E' => 20,
         ];
     }
 
     public function title(): string
     {
-        return 'Proveedores';
+        return 'Usuarios';
     }
 }

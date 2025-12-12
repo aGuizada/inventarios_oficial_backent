@@ -48,7 +48,7 @@ class CreditoVentaController extends Controller
             \Log::info('=== INICIO: Crear crédito venta ===');
             \Log::info('Request completo:', $request->all());
             \Log::info('Headers:', $request->headers->all());
-            
+
             $validated = $request->validate([
                 'venta_id' => 'required|exists:ventas,id|unique:credito_ventas,venta_id',
                 'cliente_id' => 'required|exists:clientes,id',
@@ -58,7 +58,7 @@ class CreditoVentaController extends Controller
                 'estado' => 'nullable|string|max:191',
                 'proximo_pago' => 'nullable|date',
             ]);
-            
+
             \Log::info('Validación exitosa. Datos validados:', $validated);
 
             // Preparar datos solo con los campos permitidos
@@ -70,7 +70,7 @@ class CreditoVentaController extends Controller
                 'total' => $validated['total'],
                 'estado' => $validated['estado'] ?? 'Pendiente',
             ];
-            
+
             // Manejar proximo_pago: convertir string a Carbon si es necesario
             if (isset($validated['proximo_pago']) && $validated['proximo_pago']) {
                 try {
@@ -89,7 +89,7 @@ class CreditoVentaController extends Controller
             // Verificar que la venta existe antes de crear el crédito
             $ventaExiste = \DB::table('ventas')->where('id', $data['venta_id'])->exists();
             \Log::info('¿La venta existe?', ['venta_id' => $data['venta_id'], 'existe' => $ventaExiste]);
-            
+
             if (!$ventaExiste) {
                 \Log::error('Error: La venta no existe en la base de datos', ['venta_id' => $data['venta_id']]);
                 throw new \Exception('La venta especificada no existe');
@@ -104,7 +104,7 @@ class CreditoVentaController extends Controller
 
             \Log::info('Intentando crear el registro en la base de datos...');
             $creditoVenta = CreditoVenta::create($data);
-            
+
             // Verificar que se guardó correctamente
             if (!$creditoVenta->id) {
                 \Log::error('Error: El crédito venta no se guardó correctamente - No se generó ID');
@@ -167,14 +167,14 @@ class CreditoVentaController extends Controller
             'cliente',
             'cuotas'
         ])->find($id);
-        
+
         if (!$creditoVenta) {
             return response()->json([
                 'success' => false,
                 'message' => 'Crédito no encontrado'
             ], 404);
         }
-        
+
         // Si no hay cuotas, generarlas automáticamente
         if ($creditoVenta->cuotas->count() === 0) {
             \Log::info('No hay cuotas, generándolas automáticamente...', ['credito_id' => $creditoVenta->id]);
@@ -182,7 +182,7 @@ class CreditoVentaController extends Controller
             $creditoVenta->refresh();
             $creditoVenta->load('cuotas');
         }
-        
+
         \Log::info('Crédito cargado para mostrar:', [
             'credito_id' => $creditoVenta->id,
             'venta_id' => $creditoVenta->venta_id,
@@ -191,10 +191,49 @@ class CreditoVentaController extends Controller
             'cantidad_detalles' => $creditoVenta->venta && $creditoVenta->venta->detalles ? $creditoVenta->venta->detalles->count() : 0,
             'cantidad_cuotas' => $creditoVenta->cuotas->count()
         ]);
-        
+
         return response()->json([
             'success' => true,
             'data' => $creditoVenta
+        ]);
+    }
+
+    /**
+     * Get detailed calculations for a credit
+     */
+    public function getDetails($id)
+    {
+        $creditoVenta = CreditoVenta::with([
+            'venta.cliente',
+            'venta.detalles.articulo',
+            'cliente',
+            'cuotas'
+        ])->find($id);
+
+        if (!$creditoVenta) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Crédito no encontrado'
+            ], 404);
+        }
+
+        // Calcular cuotas pagadas y pendientes
+        $cuotasPagadas = $creditoVenta->cuotas->where('estado', 'Pagado')->count();
+        $cuotasPendientes = $creditoVenta->cuotas->where('estado', '!=', 'Pagado')->count();
+        $montoPagado = $creditoVenta->cuotas->where('estado', 'Pagado')->sum('precio_cuota');
+        $saldoPendiente = $creditoVenta->total - $montoPagado;
+
+        return response()->json([
+            'credito' => $creditoVenta,
+            'calculado' => [
+                'total_cuotas' => $creditoVenta->numero_cuotas,
+                'cuotas_pagadas' => $cuotasPagadas,
+                'cuotas_pendientes' => $cuotasPendientes,
+                'monto_pagado' => round($montoPagado, 2),
+                'saldo_pendiente' => round($saldoPendiente, 2),
+                'porcentaje_pagado' => $creditoVenta->total > 0 ? round(($montoPagado / $creditoVenta->total) * 100, 2) : 0
+            ],
+            'cuotas' => $creditoVenta->cuotas
         ]);
     }
 

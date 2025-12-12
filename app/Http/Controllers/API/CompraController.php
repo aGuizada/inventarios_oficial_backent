@@ -13,6 +13,7 @@ use App\Models\Proveedor;
 use App\Models\Articulo;
 use App\Models\Caja;
 use App\Models\Inventario;
+use App\Models\Kardex;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 
@@ -46,7 +47,7 @@ class CompraController extends Controller
                 'line' => $e->getLine(),
                 'trace' => $e->getTraceAsString()
             ]);
-            
+
             return response()->json([
                 'success' => false,
                 'message' => 'Error al cargar las compras',
@@ -112,23 +113,23 @@ class CompraController extends Controller
             // Preparar datos de la compra
             $compraData = $request->except(['detalles', 'numero_cuotas', 'monto_pagado', 'proveedor_nombre']);
             $compraData['proveedor_id'] = $proveedorId;
-            
+
             // Asegurar tipos correctos
-            $compraData['user_id'] = (int)$compraData['user_id'];
-            $compraData['almacen_id'] = (int)$compraData['almacen_id'];
-            $compraData['total'] = (float)$compraData['total'];
-            
+            $compraData['user_id'] = (int) $compraData['user_id'];
+            $compraData['almacen_id'] = (int) $compraData['almacen_id'];
+            $compraData['total'] = (float) $compraData['total'];
+
             // Convertir tipo_compra a mayúsculas para que coincida con el enum de la base de datos
             if (isset($compraData['tipo_compra'])) {
                 $compraData['tipo_compra'] = strtoupper($compraData['tipo_compra']);
             }
-            
+
             // Asegurar que los campos de comprobante tengan valores por defecto si no se proporcionan
             // Estos campos son requeridos en la base de datos (no nullable)
             $compraData['tipo_comprobante'] = !empty($compraData['tipo_comprobante']) ? $compraData['tipo_comprobante'] : 'SIN COMPROBANTE';
             $compraData['serie_comprobante'] = $compraData['serie_comprobante'] ?? null;
             $compraData['num_comprobante'] = !empty($compraData['num_comprobante']) ? $compraData['num_comprobante'] : '00000000';
-            
+
             // Validar que haya una caja abierta
             if (!isset($compraData['caja_id']) || empty($compraData['caja_id'])) {
                 // Buscar la primera caja abierta
@@ -142,8 +143,8 @@ class CompraController extends Controller
                 }
                 $compraData['caja_id'] = $cajaAbierta->id;
             } else {
-                $compraData['caja_id'] = (int)$compraData['caja_id'];
-                
+                $compraData['caja_id'] = (int) $compraData['caja_id'];
+
                 // Validar que la caja esté abierta
                 $caja = Caja::find($compraData['caja_id']);
                 if (!$caja) {
@@ -153,13 +154,13 @@ class CompraController extends Controller
                         'message' => 'La caja especificada no existe.'
                     ], 400);
                 }
-                
+
                 // Verificar que la caja esté abierta (estado = 1, '1', true, o 'abierta')
-                $isCajaOpen = $caja->estado === 1 || 
-                             $caja->estado === '1' || 
-                             $caja->estado === true || 
-                             $caja->estado === 'abierta';
-                
+                $isCajaOpen = $caja->estado === 1 ||
+                    $caja->estado === '1' ||
+                    $caja->estado === true ||
+                    $caja->estado === 'abierta';
+
                 if (!$isCajaOpen) {
                     DB::rollBack();
                     return response()->json([
@@ -168,7 +169,7 @@ class CompraController extends Controller
                     ], 400);
                 }
             }
-            
+
             // Formatear fecha_hora
             if (isset($compraData['fecha_hora'])) {
                 try {
@@ -187,14 +188,14 @@ class CompraController extends Controller
                     \Log::warning('Detalle sin articulo_id o cantidad', ['detalle' => $detalle, 'index' => $index]);
                     continue;
                 }
-                
-                $articuloId = (int)$detalle['articulo_id'];
-                
+
+                $articuloId = (int) $detalle['articulo_id'];
+
                 // Verificar que el artículo existe
                 $articulo = Articulo::find($articuloId);
                 if (!$articulo) {
                     \Log::error('Artículo no encontrado', [
-                        'articulo_id' => $articuloId, 
+                        'articulo_id' => $articuloId,
                         'detalle' => $detalle,
                         'compra_base_id' => $compraBase->id
                     ]);
@@ -206,31 +207,31 @@ class CompraController extends Controller
                         'articulo_id' => $articuloId
                     ], 400);
                 }
-                
+
                 DetalleCompra::create([
                     'compra_base_id' => $compraBase->id,
                     'articulo_id' => $articuloId,
-                    'cantidad' => (int)$detalle['cantidad'],
-                    'precio' => (float)($detalle['precio_unitario'] ?? $detalle['precio'] ?? 0),
-                    'descuento' => (float)($detalle['descuento'] ?? 0),
+                    'cantidad' => (int) $detalle['cantidad'],
+                    'precio' => (float) ($detalle['precio_unitario'] ?? $detalle['precio'] ?? 0),
+                    'descuento' => (float) ($detalle['descuento'] ?? 0),
                 ]);
-                
+
                 // Actualizar inventario
-                $cantidadComprada = (int)$detalle['cantidad'];
-                $almacenId = (int)$compraData['almacen_id'];
-                
+                $cantidadComprada = (int) $detalle['cantidad'];
+                $almacenId = (int) $compraData['almacen_id'];
+
                 \Log::info('Actualizando inventario', [
                     'compra_base_id' => $compraBase->id,
                     'articulo_id' => $articuloId,
                     'almacen_id' => $almacenId,
                     'cantidad' => $cantidadComprada
                 ]);
-                
+
                 // Buscar o crear registro de inventario para este almacén y artículo
                 $inventario = Inventario::where('almacen_id', $almacenId)
                     ->where('articulo_id', $articuloId)
                     ->first();
-                
+
                 if ($inventario) {
                     // Si existe, actualizar cantidad y saldo_stock
                     $cantidadAnterior = $inventario->cantidad;
@@ -238,7 +239,7 @@ class CompraController extends Controller
                     $inventario->cantidad += $cantidadComprada;
                     $inventario->saldo_stock += $cantidadComprada;
                     $inventario->save();
-                    
+
                     \Log::info('Inventario actualizado', [
                         'inventario_id' => $inventario->id,
                         'cantidad_anterior' => $cantidadAnterior,
@@ -255,7 +256,7 @@ class CompraController extends Controller
                         'saldo_stock' => $cantidadComprada,
                         'fecha_vencimiento' => '2099-01-01', // Valor por defecto
                     ]);
-                    
+
                     \Log::info('Nuevo inventario creado', [
                         'inventario_id' => $nuevoInventario->id,
                         'almacen_id' => $almacenId,
@@ -263,22 +264,64 @@ class CompraController extends Controller
                         'cantidad' => $cantidadComprada
                     ]);
                 }
-                
+
                 // Actualizar stock del artículo (stock general)
                 $stockAnterior = $articulo->stock;
                 $articulo->stock += $cantidadComprada;
                 $articulo->save();
-                
+
                 \Log::info('Stock del artículo actualizado', [
                     'articulo_id' => $articuloId,
                     'stock_anterior' => $stockAnterior,
                     'stock_nuevo' => $articulo->stock
                 ]);
+
+                // Registrar movimiento en Kardex
+                try {
+                    // Calcular saldo anterior del kardex
+                    $kardexAnterior = Kardex::where('articulo_id', $articuloId)
+                        ->where('almacen_id', $almacenId)
+                        ->orderBy('fecha', 'desc')
+                        ->orderBy('id', 'desc')
+                        ->first();
+
+                    $saldoKardex = ($kardexAnterior->cantidad_saldo ?? 0) + $cantidadComprada;
+                    $costoUnitario = (float) ($detalle['precio_unitario'] ?? $detalle['precio'] ?? 0);
+
+                    Kardex::create([
+                        'fecha' => $compraData['fecha_hora'],
+                        'tipo_movimiento' => 'compra',
+                        'documento_tipo' => 'factura',
+                        'documento_numero' => $compraData['num_comprobante'],
+                        'articulo_id' => $articuloId,
+                        'almacen_id' => $almacenId,
+                        'cantidad_entrada' => $cantidadComprada,
+                        'cantidad_salida' => 0,
+                        'cantidad_saldo' => $saldoKardex,
+                        'costo_unitario' => $costoUnitario,
+                        'costo_total' => $cantidadComprada * $costoUnitario,
+                        'observaciones' => 'Compra ' . $compraData['tipo_comprobante'] . ' ' . $compraData['num_comprobante'],
+                        'usuario_id' => $compraData['user_id'],
+                        'compra_id' => $compraBase->id
+                    ]);
+
+                    \Log::info('Kardex registrado para compra', [
+                        'articulo_id' => $articuloId,
+                        'cantidad' => $cantidadComprada,
+                        'saldo' => $saldoKardex
+                    ]);
+                } catch (\Exception $e) {
+                    \Log::error('Error al registrar Kardex en compra', [
+                        'articulo_id' => $articuloId,
+                        'error' => $e->getMessage()
+                    ]);
+                    // No detener la transacción por error en kardex
+                }
             }
 
             // Usar el valor ya convertido a mayúsculas de $compraData
             $tipoCompra = strtoupper(trim($compraData['tipo_compra'] ?? $request->tipo_compra ?? 'CONTADO'));
-            
+
             if ($tipoCompra === 'CONTADO') {
                 CompraContado::create([
                     'id' => $compraBase->id,
@@ -288,10 +331,10 @@ class CompraController extends Controller
                 ]);
             } else {
                 // Para crédito, necesitamos los campos correctos
-                $numCuotas = (int)($request->numero_cuotas ?? 1);
-                $cuotaInicial = (float)($request->monto_pagado ?? 0);
+                $numCuotas = (int) ($request->numero_cuotas ?? 1);
+                $cuotaInicial = (float) ($request->monto_pagado ?? 0);
                 $frecuenciaDias = 30; // Valor por defecto (mensual)
-                
+
                 \Log::info('Datos recibidos para crédito', [
                     'numero_cuotas_request' => $request->numero_cuotas,
                     'numero_cuotas_convertido' => $numCuotas,
@@ -299,7 +342,7 @@ class CompraController extends Controller
                     'monto_pagado_convertido' => $cuotaInicial,
                     'tipo_compra' => $tipoCompra
                 ]);
-                
+
                 // Validar que numero_cuotas sea válido
                 if ($numCuotas < 1) {
                     DB::rollBack();
@@ -308,7 +351,7 @@ class CompraController extends Controller
                         'message' => 'El número de cuotas debe ser mayor a 0'
                     ], 400);
                 }
-                
+
                 $compraCredito = CompraCredito::create([
                     'id' => $compraBase->id,
                     'num_cuotas' => $numCuotas,
@@ -321,9 +364,9 @@ class CompraController extends Controller
                 ]);
 
                 // Calcular el saldo pendiente (total - cuota inicial)
-                $totalCompra = (float)$compraBase->total;
-                $saldoPendiente = $totalCompra - (float)$cuotaInicial;
-                
+                $totalCompra = (float) $compraBase->total;
+                $saldoPendiente = $totalCompra - (float) $cuotaInicial;
+
                 \Log::info('Creando cuotas para compra a crédito', [
                     'compra_id' => $compraBase->id,
                     'compra_credito_id' => $compraCredito->id,
@@ -332,26 +375,26 @@ class CompraController extends Controller
                     'saldo_pendiente' => $saldoPendiente,
                     'num_cuotas' => $numCuotas
                 ]);
-                
+
                 // Solo crear cuotas si hay saldo pendiente
                 if ($saldoPendiente > 0 && $numCuotas > 0) {
                     // Calcular el monto por cuota (redondeado a 2 decimales)
                     $montoPorCuota = round($saldoPendiente / $numCuotas, 2);
-                    
+
                     // Crear las cuotas
                     $fechaBase = \Carbon\Carbon::parse($compraData['fecha_hora']);
                     $totalCuotasCreadas = 0; // Para rastrear el total y ajustar la última cuota
-                    
+
                     \Log::info('Iniciando creación de cuotas', [
                         'monto_por_cuota' => $montoPorCuota,
                         'fecha_base' => $fechaBase->format('Y-m-d'),
                         'frecuencia_dias' => $frecuenciaDias
                     ]);
-                    
+
                     for ($i = 1; $i <= $numCuotas; $i++) {
                         // Calcular fecha de vencimiento (fecha base + (número de cuota * frecuencia en días))
                         $fechaVencimiento = $fechaBase->copy()->addDays($i * $frecuenciaDias);
-                        
+
                         // Para la última cuota, ajustar el monto para asegurar que la suma sea exacta
                         if ($i === $numCuotas) {
                             // La última cuota = saldo pendiente - suma de las cuotas anteriores
@@ -359,9 +402,9 @@ class CompraController extends Controller
                         } else {
                             $montoCuota = $montoPorCuota;
                         }
-                        
+
                         $totalCuotasCreadas += $montoCuota;
-                        
+
                         $cuotaCreada = CompraCuota::create([
                             'compra_credito_id' => $compraCredito->id,
                             'numero_cuota' => $i,
@@ -372,7 +415,7 @@ class CompraController extends Controller
                             'fecha_pago' => null,
                             'estado' => 'Pendiente',
                         ]);
-                        
+
                         \Log::info('Cuota creada', [
                             'cuota_id' => $cuotaCreada->id,
                             'numero_cuota' => $i,
@@ -380,7 +423,7 @@ class CompraController extends Controller
                             'fecha_vencimiento' => $fechaVencimiento->format('Y-m-d')
                         ]);
                     }
-                    
+
                     \Log::info('Cuotas creadas para compra a crédito', [
                         'compra_credito_id' => $compraCredito->id,
                         'num_cuotas' => $numCuotas,
@@ -405,9 +448,9 @@ class CompraController extends Controller
                 if ($compraBase->caja_id) {
                     $caja = Caja::find($compraBase->caja_id);
                     if ($caja) {
-                        $totalCompra = (float)$compraBase->total;
+                        $totalCompra = (float) $compraBase->total;
                         $tipoCompra = strtoupper(trim($compraBase->tipo_compra));
-                        
+
                         \Log::info('Actualizando caja con compra', [
                             'compra_id' => $compraBase->id,
                             'caja_id' => $compraBase->caja_id,
@@ -417,33 +460,33 @@ class CompraController extends Controller
                             'compras_contado_antes' => $caja->compras_contado,
                             'compras_credito_antes' => $caja->compras_credito
                         ]);
-                        
+
                         // Actualizar compras por tipo (contado o crédito) usando increment para evitar problemas de concurrencia
                         if ($tipoCompra === 'CONTADO') {
-                            $valorAnterior = (float)($caja->compras_contado ?? 0);
+                            $valorAnterior = (float) ($caja->compras_contado ?? 0);
                             // Usar DB::raw para actualizar directamente en la base de datos
                             DB::table('cajas')
                                 ->where('id', $caja->id)
                                 ->increment('compras_contado', $totalCompra);
-                            
+
                             // Recargar para obtener el nuevo valor
                             $caja->refresh();
-                            
+
                             \Log::info('Actualizado compras_contado', [
                                 'valor_anterior' => $valorAnterior,
                                 'total_compra' => $totalCompra,
                                 'nuevo_valor' => $caja->compras_contado
                             ]);
                         } elseif ($tipoCompra === 'CREDITO' || $tipoCompra === 'CRÉDITO') {
-                            $valorAnterior = (float)($caja->compras_credito ?? 0);
+                            $valorAnterior = (float) ($caja->compras_credito ?? 0);
                             // Usar DB::raw para actualizar directamente en la base de datos
                             DB::table('cajas')
                                 ->where('id', $caja->id)
                                 ->increment('compras_credito', $totalCompra);
-                            
+
                             // Recargar para obtener el nuevo valor
                             $caja->refresh();
-                            
+
                             \Log::info('Actualizado compras_credito', [
                                 'valor_anterior' => $valorAnterior,
                                 'total_compra' => $totalCompra,
@@ -455,7 +498,7 @@ class CompraController extends Controller
                                 'tipo_compra_original' => $compraBase->tipo_compra
                             ]);
                         }
-                        
+
                         \Log::info('Caja actualizada después de compra', [
                             'compras_contado_despues' => $caja->compras_contado,
                             'compras_credito_despues' => $caja->compras_credito
@@ -519,14 +562,14 @@ class CompraController extends Controller
     {
         // Buscar la compra manualmente
         $compra = CompraBase::find($id);
-        
+
         if (!$compra) {
             return response()->json([
                 'error' => 'Compra no encontrada',
                 'message' => "No se encontró una compra con ID {$id}"
             ], 404);
         }
-        
+
         $request->validate([
             'proveedor_id' => 'nullable|exists:proveedores,id',
             'proveedor_nombre' => 'required_without:proveedor_id|string|max:255',
@@ -577,19 +620,19 @@ class CompraController extends Controller
             }
 
             // Guardar valores anteriores para revertir cambios en la caja
-            $totalAnterior = (float)$compra->total;
+            $totalAnterior = (float) $compra->total;
             $tipoCompraAnterior = strtoupper(trim($compra->tipo_compra));
             $cajaIdAnterior = $compra->caja_id;
 
             // Preparar datos de la compra
             $compraData = $request->except(['detalles', 'proveedor_nombre']);
             $compraData['proveedor_id'] = $proveedorId;
-            
+
             // Asegurar tipos correctos
-            $compraData['user_id'] = (int)$compraData['user_id'];
-            $compraData['almacen_id'] = (int)$compraData['almacen_id'];
-            $compraData['total'] = (float)$compraData['total'];
-            
+            $compraData['user_id'] = (int) $compraData['user_id'];
+            $compraData['almacen_id'] = (int) $compraData['almacen_id'];
+            $compraData['total'] = (float) $compraData['total'];
+
             // Formatear fecha_hora
             if (isset($compraData['fecha_hora'])) {
                 try {
@@ -606,19 +649,19 @@ class CompraController extends Controller
 
             // Obtener detalles existentes antes de eliminarlos para revertir inventario
             $detallesExistentes = DetalleCompra::where('compra_base_id', $compraId)->get();
-            
+
             // Revertir cambios en inventario de los detalles existentes
             foreach ($detallesExistentes as $detalleExistente) {
                 $articuloExistente = Articulo::find($detalleExistente->articulo_id);
                 if ($articuloExistente) {
                     $cantidadARevertir = $detalleExistente->cantidad;
                     $almacenIdExistente = $compra->almacen_id;
-                    
+
                     // Revertir en inventario
                     $inventarioExistente = Inventario::where('almacen_id', $almacenIdExistente)
                         ->where('articulo_id', $detalleExistente->articulo_id)
                         ->first();
-                    
+
                     if ($inventarioExistente) {
                         $inventarioExistente->cantidad -= $cantidadARevertir;
                         $inventarioExistente->saldo_stock -= $cantidadARevertir;
@@ -630,7 +673,7 @@ class CompraController extends Controller
                         }
                         $inventarioExistente->save();
                     }
-                    
+
                     // Revertir stock del artículo
                     $articuloExistente->stock -= $cantidadARevertir;
                     if ($articuloExistente->stock < 0) {
@@ -650,14 +693,14 @@ class CompraController extends Controller
                         \Log::warning('Detalle sin articulo_id o cantidad', ['detalle' => $detalle, 'index' => $index]);
                         continue;
                     }
-                    
-                    $articuloId = (int)$detalle['articulo_id'];
-                    
+
+                    $articuloId = (int) $detalle['articulo_id'];
+
                     // Verificar que el artículo existe
                     $articulo = Articulo::find($articuloId);
                     if (!$articulo) {
                         \Log::error('Artículo no encontrado', [
-                            'articulo_id' => $articuloId, 
+                            'articulo_id' => $articuloId,
                             'detalle' => $detalle,
                             'compra_base_id' => $compraId
                         ]);
@@ -669,24 +712,24 @@ class CompraController extends Controller
                             'articulo_id' => $articuloId
                         ], 400);
                     }
-                    
+
                     DetalleCompra::create([
                         'compra_base_id' => $compraId,
                         'articulo_id' => $articuloId,
-                        'cantidad' => (int)$detalle['cantidad'],
-                        'precio' => (float)($detalle['precio_unitario'] ?? $detalle['precio'] ?? 0),
-                        'descuento' => (float)($detalle['descuento'] ?? 0),
+                        'cantidad' => (int) $detalle['cantidad'],
+                        'precio' => (float) ($detalle['precio_unitario'] ?? $detalle['precio'] ?? 0),
+                        'descuento' => (float) ($detalle['descuento'] ?? 0),
                     ]);
-                    
+
                     // Actualizar inventario
-                    $cantidadComprada = (int)$detalle['cantidad'];
-                    $almacenId = (int)$compraData['almacen_id'];
-                    
+                    $cantidadComprada = (int) $detalle['cantidad'];
+                    $almacenId = (int) $compraData['almacen_id'];
+
                     // Buscar o crear registro de inventario para este almacén y artículo
                     $inventario = Inventario::where('almacen_id', $almacenId)
                         ->where('articulo_id', $articuloId)
                         ->first();
-                    
+
                     if ($inventario) {
                         // Si existe, actualizar cantidad y saldo_stock
                         $inventario->cantidad += $cantidadComprada;
@@ -702,7 +745,7 @@ class CompraController extends Controller
                             'fecha_vencimiento' => '2099-01-01', // Valor por defecto
                         ]);
                     }
-                    
+
                     // Actualizar stock del artículo (stock general)
                     $articulo->stock += $cantidadComprada;
                     $articulo->save();
@@ -726,16 +769,16 @@ class CompraController extends Controller
             if ($compra->caja_id) {
                 $caja = Caja::find($compra->caja_id);
                 if ($caja) {
-                    $totalCompra = (float)$compra->total;
+                    $totalCompra = (float) $compra->total;
                     $tipoCompra = strtoupper(trim($compra->tipo_compra));
-                    
+
                     // Actualizar compras por tipo (contado o crédito)
                     if ($tipoCompra === 'CONTADO') {
                         $caja->compras_contado = ($caja->compras_contado ?? 0) + $totalCompra;
                     } elseif ($tipoCompra === 'CREDITO' || $tipoCompra === 'CRÉDITO') {
                         $caja->compras_credito = ($caja->compras_credito ?? 0) + $totalCompra;
                     }
-                    
+
                     $caja->save();
                 }
             }
@@ -766,24 +809,24 @@ class CompraController extends Controller
         try {
             // Obtener detalles de la compra antes de eliminarla
             $detalles = DetalleCompra::where('compra_base_id', $compra->id)->get();
-            
+
             // Guardar información de la caja antes de eliminar
-            $totalCompra = (float)$compra->total;
+            $totalCompra = (float) $compra->total;
             $tipoCompra = strtoupper(trim($compra->tipo_compra));
             $cajaId = $compra->caja_id;
-            
+
             // Revertir cambios en inventario
             foreach ($detalles as $detalle) {
                 $articulo = Articulo::find($detalle->articulo_id);
                 if ($articulo) {
                     $cantidadARevertir = $detalle->cantidad;
                     $almacenId = $compra->almacen_id;
-                    
+
                     // Revertir en inventario
                     $inventario = Inventario::where('almacen_id', $almacenId)
                         ->where('articulo_id', $detalle->articulo_id)
                         ->first();
-                    
+
                     if ($inventario) {
                         $inventario->cantidad -= $cantidadARevertir;
                         $inventario->saldo_stock -= $cantidadARevertir;
@@ -795,7 +838,7 @@ class CompraController extends Controller
                         }
                         $inventario->save();
                     }
-                    
+
                     // Revertir stock del artículo
                     $articulo->stock -= $cantidadARevertir;
                     if ($articulo->stock < 0) {
@@ -804,7 +847,7 @@ class CompraController extends Controller
                     $articulo->save();
                 }
             }
-            
+
             // Revertir cambios en la caja
             if ($cajaId) {
                 $caja = Caja::find($cajaId);
@@ -817,7 +860,7 @@ class CompraController extends Controller
                     $caja->save();
                 }
             }
-            
+
             $compra->delete();
             DB::commit();
             return response()->json(null, 204);

@@ -6,6 +6,9 @@ use App\Http\Controllers\Controller;
 use App\Http\Traits\HasPagination;
 use App\Models\Cliente;
 use Illuminate\Http\Request;
+use App\Exports\ClientesExport;
+use Barryvdh\DomPDF\Facade\Pdf;
+use Maatwebsite\Excel\Facades\Excel;
 
 class ClienteController extends Controller
 {
@@ -14,7 +17,7 @@ class ClienteController extends Controller
     public function index(Request $request)
     {
         $query = Cliente::query();
-        
+
         // Campos buscables: nombre, teléfono, email, número de documento, dirección
         $searchableFields = [
             'nombre',
@@ -23,16 +26,16 @@ class ClienteController extends Controller
             'num_documento',
             'direccion'
         ];
-        
+
         // Aplicar búsqueda
         $query = $this->applySearch($query, $request, $searchableFields);
-        
+
         // Campos ordenables
         $sortableFields = ['id', 'nombre', 'email', 'telefono', 'created_at'];
-        
+
         // Aplicar ordenamiento
         $query = $this->applySorting($query, $request, $sortableFields, 'id', 'desc');
-        
+
         // Aplicar paginación
         return $this->paginateResponse($query, $request, 15, 100);
     }
@@ -80,5 +83,22 @@ class ClienteController extends Controller
     {
         $cliente->delete();
         return response()->json(null, 204);
+    }
+    /**
+     * Exporta clientes a Excel
+     */
+    public function exportExcel()
+    {
+        return Excel::download(new ClientesExport, 'clientes.xlsx');
+    }
+
+    /**
+     * Exporta clientes a PDF
+     */
+    public function exportPDF()
+    {
+        $clientes = Cliente::all();
+        $pdf = Pdf::loadView('pdf.clientes', compact('clientes'));
+        return $pdf->download('clientes.pdf');
     }
 }

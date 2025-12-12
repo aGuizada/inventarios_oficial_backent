@@ -14,7 +14,7 @@ class CajaController extends Controller
     public function index(Request $request)
     {
         $query = Caja::with(['sucursal', 'user']);
-        
+
         // Campos buscables: ID, sucursal, usuario, fechas
         $searchableFields = [
             'id',
@@ -24,16 +24,16 @@ class CajaController extends Controller
             'fecha_apertura',
             'fecha_cierre'
         ];
-        
+
         // Aplicar búsqueda
         $query = $this->applySearch($query, $request, $searchableFields);
-        
+
         // Campos ordenables
         $sortableFields = ['id', 'fecha_apertura', 'fecha_cierre', 'saldo_inicial', 'estado'];
-        
+
         // Aplicar ordenamiento
         $query = $this->applySorting($query, $request, $sortableFields, 'id', 'desc');
-        
+
         // Aplicar paginación
         return $this->paginateResponse($query, $request, 15, 100);
     }
@@ -179,6 +179,93 @@ class CajaController extends Controller
         $caja->update($request->all());
 
         return response()->json($caja);
+    }
+
+    /**
+     * Get detailed calculations for a specific caja
+     * Includes: ventas (contado, credito, qr), compras, transacciones, saldos
+     */
+    public function getCajaDetails($id)
+    {
+        $caja = Caja::with(['sucursal', 'user'])->find($id);
+
+        if (!$caja) {
+            return response()->json([
+                'message' => 'Caja no encontrada',
+                'error' => "No se encontró una caja con el ID: {$id}"
+            ], 404);
+        }
+
+        // Obtener ventas de la caja
+        $ventas = \App\Models\Venta::where('caja_id', $id)
+            ->with(['cliente', 'tipoVenta', 'tipoPago'])
+            ->get();
+
+        // Obtener compras de la caja (usando compras_base)
+        $compras = \App\Models\CompraBase::where('caja_id', $id)
+            ->with(['proveedor'])
+            ->get();
+
+        // Obtener transacciones de caja
+        $transacciones = \App\Models\TransaccionCaja::where('caja_id', $id)->get();
+
+        // Calcular ventas al contado
+        $ventasContado = $ventas->filter(function ($v) {
+            $tipoVenta = $v->tipoVenta->nombre_tipo_ventas ?? $v->tipoVenta->nombre ?? '';
+            return stripos($tipoVenta, 'contado') !== false || stripos($tipoVenta, 'efectivo') !== false;
+        })->sum('total');
+
+        // Calcular ventas a crédito
+        $ventasCredito = $ventas->filter(function ($v) {
+            $tipoVenta = $v->tipoVenta->nombre_tipo_ventas ?? $v->tipoVenta->nombre ?? '';
+            return stripos($tipoVenta, 'credito') !== false || stripos($tipoVenta, 'crédito') !== false;
+        })->sum('total');
+
+        // Calcular ventas con pago QR
+        $ventasQR = $ventas->filter(function ($v) {
+            $tipoPago = $v->tipoPago->nombre_tipo_pago ?? $v->tipoPago->nombre ?? '';
+            return stripos($tipoPago, 'qr') !== false || stripos($tipoPago, 'qrcode') !== false;
+        })->sum('total');
+
+        // Calcular compras al contado
+        $comprasContado = $compras->where('tipo_compra', 'contado')->sum('total');
+
+        // Calcular compras a crédito
+        $comprasCredito = $compras->where('tipo_compra', 'credito')->sum('total');
+
+        // Calcular entradas (depositos/ingresos)
+        $entradas = $transacciones->where('transaccion', 'ingreso')->sum('importe');
+
+        // Calcular salidas (egresos)
+        $salidas = $transacciones->where('transaccion', 'egreso')->sum('importe');
+
+        // Total ventas
+        $totalVentas = $ventas->sum('total');
+
+        // Total compras
+        $totalCompras = $compras->sum('total');
+
+        // Saldo final calculado
+        $saldoFinal = ($caja->saldo_inicial ?? 0) + $totalVentas + $entradas - $totalCompras - $salidas;
+
+        return response()->json([
+            'caja' => $caja,
+            'calculado' => [
+                'ventas_contado' => round($ventasContado, 2),
+                'ventas_credito' => round($ventasCredito, 2),
+                'ventas_qr' => round($ventasQR, 2),
+                'compras_contado' => round($comprasContado, 2),
+                'compras_credito' => round($comprasCredito, 2),
+                'entradas' => round($entradas, 2),
+                'salidas' => round($salidas, 2),
+                'total_ventas' => round($totalVentas, 2),
+                'total_compras' => round($totalCompras, 2),
+                'saldo_final' => round($saldoFinal, 2)
+            ],
+            'ventas' => $ventas,
+            'compras' => $compras,
+            'transacciones' => $transacciones
+        ]);
     }
 
     public function destroy($id)

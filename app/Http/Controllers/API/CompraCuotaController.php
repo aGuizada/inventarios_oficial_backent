@@ -64,7 +64,7 @@ class CompraCuotaController extends Controller
     {
         try {
             $cuota = CompraCuota::findOrFail($id);
-            
+
             $request->validate([
                 'monto_pagado' => 'required|numeric|min:0',
                 'fecha_pago' => 'nullable|date',
@@ -77,9 +77,9 @@ class CompraCuotaController extends Controller
                 ], 400);
             }
 
-            $montoPagado = (float)$request->monto_pagado;
-            $saldoAnterior = (float)$cuota->saldo_pendiente;
-            
+            $montoPagado = (float) $request->monto_pagado;
+            $saldoAnterior = (float) $cuota->saldo_pendiente;
+
             // Actualizar cuota
             $cuota->monto_pagado = $montoPagado;
             $cuota->saldo_pendiente = max(0, $saldoAnterior - $montoPagado);
@@ -93,7 +93,7 @@ class CompraCuotaController extends Controller
                 $todasPagadas = $compraCredito->cuotas()
                     ->where('estado', '!=', 'Pagado')
                     ->count() === 0;
-                
+
                 if ($todasPagadas) {
                     $compraCredito->estado_credito = 'Pagado';
                     $compraCredito->save();
@@ -119,13 +119,60 @@ class CompraCuotaController extends Controller
         }
     }
 
+    /**
+     * Get cuotas with calculations for a compra credito
+     */
+    public function getByCompraCreditoWithDetails($compraCreditoId)
+    {
+        try {
+            $cuotas = CompraCuota::where('compra_credito_id', $compraCreditoId)
+                ->orderBy('numero_cuota', 'asc')
+                ->get();
+
+            if ($cuotas->isEmpty()) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'No se encontraron cuotas para esta compra a crédito'
+                ], 404);
+            }
+
+            // Calcular totales
+            $totalCuotas = $cuotas->count();
+            $cuotasPagadas = $cuotas->where('estado', 'Pagado')->count();
+            $cuotasPendientes = $cuotas->where('estado', '!=', 'Pagado')->count();
+            $montoPagado = $cuotas->where('estado', 'Pagado')->sum('monto_cuota');
+            $compraCredito = \App\Models\CompraCredito::find($compraCreditoId);
+            $totalCompra = $compraCredito ? $compraCredito->total : $cuotas->sum('monto_cuota');
+            $saldoPendiente = $totalCompra - $montoPagado;
+
+            return response()->json([
+                'success' => true,
+                'cuotas' => $cuotas,
+                'calculado' => [
+                    'total_cuotas' => $totalCuotas,
+                    'cuotas_pagadas' => $cuotasPagadas,
+                    'cuotas_pendientes' => $cuotasPendientes,
+                    'monto_pagado' => round($montoPagado, 2),
+                    'saldo_pendiente' => round($saldoPendiente, 2),
+                    'total_compra' => round($totalCompra, 2),
+                    'porcentaje_pagado' => $totalCompra > 0 ? round(($montoPagado / $totalCompra) * 100, 2) : 0
+                ]
+            ]);
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Error al obtener cuotas con detalles: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
     public function getByCompraCredito($compraCreditoId)
     {
         try {
             $cuotas = CompraCuota::where('compra_credito_id', $compraCreditoId)
                 ->orderBy('numero_cuota', 'asc')
                 ->get();
-            
+
             return response()->json([
                 'success' => true,
                 'data' => $cuotas

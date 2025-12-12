@@ -6,6 +6,9 @@ use App\Http\Controllers\Controller;
 use App\Http\Traits\HasPagination;
 use App\Models\Inventario;
 use Illuminate\Http\Request;
+use App\Exports\InventariosExport;
+use Barryvdh\DomPDF\Facade\Pdf;
+use Maatwebsite\Excel\Facades\Excel;
 
 class InventarioController extends Controller
 {
@@ -146,5 +149,23 @@ class InventarioController extends Controller
         $query = $this->applySorting($query, $request, ['id', 'cantidad', 'saldo_stock', 'created_at'], 'created_at', 'desc');
 
         return $this->paginateResponse($query, $request, 15, 100);
+    }
+    /**
+     * Exporta inventario a Excel
+     */
+    public function exportExcel()
+    {
+        return Excel::download(new InventariosExport, 'inventario.xlsx');
+    }
+
+    /**
+     * Exporta inventario a PDF
+     */
+    public function exportPDF()
+    {
+        $inventarios = Inventario::with(['articulo', 'almacen'])->get();
+        $pdf = Pdf::loadView('pdf.inventarios', compact('inventarios'));
+        $pdf->setPaper('a4', 'landscape');
+        return $pdf->download('inventario.pdf');
     }
 }

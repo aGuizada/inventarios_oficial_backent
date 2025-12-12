@@ -11,7 +11,7 @@ return new class extends Migration {
     public function up(): void
     {
         Schema::table('configuracion_trabajos', function (Blueprint $table) {
-            $table->foreignId('empresa_id')->nullable()->constrained('empresas')->nullOnDelete();
+            $table->unsignedBigInteger('empresa_id')->nullable()->after('id');
         });
     }
 

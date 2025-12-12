@@ -10,6 +10,8 @@ use Illuminate\Support\Facades\Storage;
 use Maatwebsite\Excel\Excel as ExcelService;
 use App\Exports\ArticulosExport;
 use App\Imports\ArticulosImport;
+use Barryvdh\DomPDF\Facade\Pdf;
+use Maatwebsite\Excel\Facades\Excel;
 
 class ArticuloController extends Controller
 {
@@ -18,7 +20,7 @@ class ArticuloController extends Controller
     public function index(Request $request)
     {
         $query = Articulo::with(['categoria', 'proveedor', 'medida', 'marca', 'industria']);
-        
+
         // Campos buscables: código, nombre, descripción, categoría, marca, proveedor
         $searchableFields = [
             'codigo',
@@ -29,16 +31,16 @@ class ArticuloController extends Controller
             'proveedor.nombre',
             'industria.nombre'
         ];
-        
+
         // Aplicar búsqueda
         $query = $this->applySearch($query, $request, $searchableFields);
-        
+
         // Campos ordenables
         $sortableFields = ['id', 'codigo', 'nombre', 'precio_venta', 'stock', 'created_at'];
-        
+
         // Aplicar ordenamiento
         $query = $this->applySorting($query, $request, $sortableFields, 'id', 'desc');
-        
+
         // Aplicar paginación
         return $this->paginateResponse($query, $request, 15, 100);
     }
@@ -240,5 +242,23 @@ class ArticuloController extends Controller
                 'error' => $e->getMessage(),
             ], 500);
         }
+    }
+    /**
+     * Exporta artículos a Excel
+     */
+    public function exportExcel()
+    {
+        return Excel::download(new ArticulosExport, 'articulos.xlsx');
+    }
+
+    /**
+     * Exporta artículos a PDF
+     */
+    public function exportPDF()
+    {
+        $articulos = Articulo::with(['categoria', 'marca', 'medida', 'industria'])->get();
+        $pdf = Pdf::loadView('pdf.articulos', compact('articulos'));
+        $pdf->setPaper('a4', 'landscape');
+        return $pdf->download('articulos.pdf');
     }
 }

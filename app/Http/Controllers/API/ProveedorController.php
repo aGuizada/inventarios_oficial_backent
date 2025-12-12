@@ -9,6 +9,8 @@ use Illuminate\Http\Request;
 use Maatwebsite\Excel\Excel as ExcelService;
 use App\Exports\ProveedoresExport;
 use App\Imports\ProveedoresImport;
+use Barryvdh\DomPDF\Facade\Pdf;
+use Maatwebsite\Excel\Facades\Excel;
 
 class ProveedorController extends Controller
 {
@@ -162,5 +164,23 @@ class ProveedorController extends Controller
                 'error' => $e->getMessage(),
             ], 500);
         }
+    }
+    /**
+     * Exporta proveedores a Excel
+     */
+    public function exportExcel()
+    {
+        return Excel::download(new ProveedoresExport, 'proveedores.xlsx');
+    }
+
+    /**
+     * Exporta proveedores a PDF
+     */
+    public function exportPDF()
+    {
+        $proveedores = Proveedor::all();
+        $pdf = Pdf::loadView('pdf.proveedores', compact('proveedores'));
+        $pdf->setPaper('a4', 'landscape');
+        return $pdf->download('proveedores.pdf');
     }
 }

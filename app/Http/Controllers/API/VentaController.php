@@ -11,6 +11,7 @@ use App\Models\Articulo;
 use App\Models\Caja;
 use App\Models\TipoVenta;
 use App\Models\TipoPago;
+use App\Models\Kardex; // Added Kardex use statement
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
@@ -18,6 +19,13 @@ use Illuminate\Validation\ValidationException;
 class VentaController extends Controller
 {
     use HasPagination;
+
+    protected $kardexService;
+
+    public function __construct(\App\Services\KardexService $kardexService)
+    {
+        $this->kardexService = $kardexService;
+    }
 
     public function index(Request $request)
     {
@@ -34,6 +42,16 @@ class VentaController extends Controller
                 'user.name'
             ];
 
+            // Filtro por estado (para ver anuladas)
+            if ($request->has('estado')) {
+                $query->where('estado', $request->estado);
+            }
+
+            // Filtro por devoluciones
+            if ($request->has('has_devoluciones') && $request->has_devoluciones == 'true') {
+                $query->whereHas('devoluciones');
+            }
+
             $query = $this->applySearch($query, $request, $searchableFields);
             $query = $this->applySorting($query, $request, ['id', 'fecha_hora', 'total', 'num_comprobante'], 'id', 'desc');
 
@@ -45,7 +63,7 @@ class VentaController extends Controller
                 'line' => $e->getLine(),
                 'trace' => $e->getTraceAsString()
             ]);
-            
+
             return response()->json([
                 'success' => false,
                 'message' => 'Error al cargar las ventas',
@@ -107,6 +125,9 @@ class VentaController extends Controller
                 'detalles.*.precio' => 'required|numeric',
                 'detalles.*.descuento' => 'nullable|numeric',
                 'detalles.*.unidad_medida' => 'nullable|string|in:Unidad,Paquete,Centimetro',
+                'pagos' => 'nullable|array',
+                'pagos.*.tipo_pago_id' => 'required|exists:tipo_pagos,id',
+                'pagos.*.monto' => 'required|numeric|min:0',
             ], [
                 'cliente_id.required' => 'El cliente es obligatorio.',
                 'cliente_id.exists' => 'El cliente seleccionado no existe.',
@@ -138,6 +159,12 @@ class VentaController extends Controller
                 'detalles.*.precio.required' => 'El precio es obligatorio en los detalles.',
                 'detalles.*.precio.numeric' => 'El precio debe ser un número.',
                 'detalles.*.descuento.numeric' => 'El descuento debe ser un número.',
+                'pagos.array' => 'Los pagos deben ser un arreglo.',
+                'pagos.*.tipo_pago_id.required' => 'El tipo de pago es obligatorio en los pagos.',
+                'pagos.*.tipo_pago_id.exists' => 'El tipo de pago seleccionado no existe en los pagos.',
+                'pagos.*.monto.required' => 'El monto es obligatorio en los pagos.',
+                'pagos.*.monto.numeric' => 'El monto debe ser un número.',
+                'pagos.*.monto.min' => 'El monto debe ser al menos 0.',
             ]);
         } catch (ValidationException $e) {
             return response()->json([
@@ -205,7 +232,7 @@ class VentaController extends Controller
                 }
             }
 
-            $venta = Venta::create($request->except('detalles'));
+            $venta = Venta::create($request->except(['detalles', 'pagos']));
 
             foreach ($request->detalles as $detalle) {
                 DetalleVenta::create([
@@ -217,40 +244,56 @@ class VentaController extends Controller
                     'unidad_medida' => $detalle['unidad_medida'] ?? 'Unidad',
                 ]);
 
-                // Actualizar inventario (reducir stock)
+                // Calcular cantidad a deducir según unidad de medida
                 $articuloId = (int) $detalle['articulo_id'];
                 $cantidadVenta = (int) $detalle['cantidad'];
                 $unidadMedida = $detalle['unidad_medida'] ?? 'Unidad';
 
-                $inventario = Inventario::where('articulo_id', $articuloId)
-                    ->where('almacen_id', $almacenId)
-                    ->first();
+                $articulo = Articulo::find($articuloId);
+                $cantidadDeducir = $cantidadVenta;
 
-                if ($inventario) {
-                    $articulo = Articulo::find($articuloId);
-                    $cantidadDeducir = $cantidadVenta;
-
-                    if ($unidadMedida === 'Paquete' && $articulo) {
-                        $cantidadDeducir = $cantidadVenta * ($articulo->unidad_envase > 0 ? $articulo->unidad_envase : 1);
-                    } elseif ($unidadMedida === 'Centimetro') {
-                        $cantidadDeducir = $cantidadVenta / 100;
-                    }
-
-                    $inventario->saldo_stock -= $cantidadDeducir;
-                    if ($inventario->saldo_stock < 0) {
-                        $inventario->saldo_stock = 0;
-                    }
-                    $inventario->save();
-
-                    // Actualizar stock del artículo (stock general)
-                    if ($articulo) {
-                        $articulo->stock -= $cantidadDeducir;
-                        if ($articulo->stock < 0) {
-                            $articulo->stock = 0;
-                        }
-                        $articulo->save();
-                    }
+                if ($unidadMedida === 'Paquete' && $articulo) {
+                    $cantidadDeducir = $cantidadVenta * ($articulo->unidad_envase > 0 ? $articulo->unidad_envase : 1);
+                } elseif ($unidadMedida === 'Centimetro') {
+                    $cantidadDeducir = $cantidadVenta / 100;
                 }
+
+                // Registrar movimiento en Kardex y actualizar stock usando KardexService
+                $this->kardexService->registrarMovimiento([
+                    'articulo_id' => $detalle['articulo_id'],
+                    'almacen_id' => $almacenId,
+                    'fecha' => $request->fecha_hora,
+                    'tipo_movimiento' => 'venta',
+                    'documento_tipo' => $request->tipo_comprobante ?? 'ticket',
+                    'documento_numero' => $request->num_comprobante ?? 'S/N',
+                    'cantidad_entrada' => 0,
+                    'cantidad_salida' => $cantidadDeducir,
+                    'costo_unitario' => $articulo->precio_costo ?? 0, // Usar costo del artículo
+                    'precio_unitario' => $detalle['precio'], // Precio de venta
+                    'observaciones' => 'Venta ' . ($request->tipo_comprobante ?? 'ticket') . ' ' . ($request->num_comprobante ?? ''),
+                    'usuario_id' => $request->user_id,
+                    'venta_id' => $venta->id
+                ]);
+            }
+
+            // Registrar pagos mixtos si existen
+            if ($request->has('pagos') && is_array($request->pagos) && count($request->pagos) > 0) {
+                foreach ($request->pagos as $pago) {
+                    \App\Models\DetallePago::create([
+                        'venta_id' => $venta->id,
+                        'tipo_pago_id' => $pago['tipo_pago_id'],
+                        'monto' => $pago['monto'],
+                        'referencia' => $pago['referencia'] ?? null
+                    ]);
+                }
+            } else {
+                // Si no hay pagos mixtos, registrar el pago único por defecto
+                \App\Models\DetallePago::create([
+                    'venta_id' => $venta->id,
+                    'tipo_pago_id' => $request->tipo_pago_id,
+                    'monto' => $request->total,
+                    'referencia' => null
+                ]);
             }
 
             // Actualizar la caja con la información de la venta
@@ -259,12 +302,9 @@ class VentaController extends Controller
                 if ($caja) {
                     $totalVenta = (float) $venta->total;
 
-                    // Obtener tipo de venta y tipo de pago
+                    // Obtener tipo de venta
                     $tipoVenta = TipoVenta::find($venta->tipo_venta_id);
-                    $tipoPago = TipoPago::find($venta->tipo_pago_id);
-
                     $nombreTipoVenta = $tipoVenta ? strtolower(trim($tipoVenta->nombre_tipo_ventas)) : '';
-                    $nombreTipoPago = $tipoPago ? strtolower(trim($tipoPago->nombre_tipo_pago)) : '';
 
                     // Actualizar ventas totales
                     $caja->ventas = ($caja->ventas ?? 0) + $totalVenta;
@@ -276,13 +316,20 @@ class VentaController extends Controller
                         $caja->ventas_credito = ($caja->ventas_credito ?? 0) + $totalVenta;
                     }
 
-                    // Actualizar pagos por método de pago
-                    if (strpos($nombreTipoPago, 'efectivo') !== false) {
-                        $caja->pagos_efectivo = ($caja->pagos_efectivo ?? 0) + $totalVenta;
-                    } elseif (strpos($nombreTipoPago, 'qr') !== false) {
-                        $caja->pagos_qr = ($caja->pagos_qr ?? 0) + $totalVenta;
-                    } elseif (strpos($nombreTipoPago, 'transferencia') !== false) {
-                        $caja->pagos_transferencia = ($caja->pagos_transferencia ?? 0) + $totalVenta;
+                    // Actualizar pagos por método de pago (usando detalle_pagos)
+                    $pagos = \App\Models\DetallePago::where('venta_id', $venta->id)->with('tipoPago')->get();
+
+                    foreach ($pagos as $pago) {
+                        $nombreTipoPago = $pago->tipoPago ? strtolower(trim($pago->tipoPago->nombre_tipo_pago)) : '';
+                        $montoPago = (float) $pago->monto;
+
+                        if (strpos($nombreTipoPago, 'efectivo') !== false) {
+                            $caja->pagos_efectivo = ($caja->pagos_efectivo ?? 0) + $montoPago;
+                        } elseif (strpos($nombreTipoPago, 'qr') !== false) {
+                            $caja->pagos_qr = ($caja->pagos_qr ?? 0) + $montoPago;
+                        } elseif (strpos($nombreTipoPago, 'transferencia') !== false) {
+                            $caja->pagos_transferencia = ($caja->pagos_transferencia ?? 0) + $montoPago;
+                        }
                     }
 
                     $caja->save();

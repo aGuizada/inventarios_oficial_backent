@@ -13,18 +13,22 @@ use App\Http\Controllers\API\ClienteController;
 use App\Http\Controllers\API\CompraController;
 use App\Http\Controllers\API\CompraCuotaController;
 use App\Http\Controllers\API\ConfiguracionTrabajoController;
+use App\Http\Controllers\API\ConteoFisicoController;
 use App\Http\Controllers\API\CotizacionController;
 use App\Http\Controllers\API\CreditoVentaController;
 use App\Http\Controllers\API\CuotaCreditoController;
+use App\Http\Controllers\API\DevolucionController;
 use App\Http\Controllers\API\EmpresaController;
 use App\Http\Controllers\API\IndustriaController;
 use App\Http\Controllers\API\InventarioController;
+use App\Http\Controllers\API\KardexController;
 use App\Http\Controllers\API\MarcaController;
 use App\Http\Controllers\API\MedidaController;
 use App\Http\Controllers\API\MonedaController;
 use App\Http\Controllers\API\NotificationController;
 use App\Http\Controllers\API\PrecioController;
 use App\Http\Controllers\API\ProveedorController;
+use App\Http\Controllers\API\ReporteController;
 use App\Http\Controllers\API\RolController;
 use App\Http\Controllers\API\SucursalController;
 use App\Http\Controllers\API\TipoPagoController;
@@ -32,6 +36,7 @@ use App\Http\Controllers\API\TipoVentaController;
 use App\Http\Controllers\API\TransaccionCajaController;
 use App\Http\Controllers\API\TraspasoController;
 use App\Http\Controllers\API\VentaController;
+use App\Http\Controllers\API\DashboardController;
 
 /*
 |--------------------------------------------------------------------------
@@ -56,6 +61,8 @@ Route::prefix('auth')->group(function () {
 Route::post('/auth/logout', [AuthController::class, 'logout']);
 
 // Usuarios
+Route::get('users/export-excel', [UserController::class, 'exportExcel']);
+Route::get('users/export-pdf', [UserController::class, 'exportPDF']);
 Route::apiResource('users', UserController::class);
 
 // Almacenes
@@ -67,15 +74,20 @@ Route::apiResource('arqueos-caja', ArqueoCajaController::class);
 // Artículos
 Route::get('articulos/template/download', [ArticuloController::class, 'downloadTemplate']);
 Route::post('articulos/import', [ArticuloController::class, 'import']);
+Route::get('articulos/export-excel', [ArticuloController::class, 'exportExcel']);
+Route::get('articulos/export-pdf', [ArticuloController::class, 'exportPDF']);
 Route::apiResource('articulos', ArticuloController::class);
 
 // Cajas
+Route::get('cajas/{id}/details', [CajaController::class, 'getCajaDetails']);
 Route::apiResource('cajas', CajaController::class);
 
 // Categorías
 Route::apiResource('categorias', CategoriaController::class);
 
 // Clientes
+Route::get('clientes/export-excel', [ClienteController::class, 'exportExcel']);
+Route::get('clientes/export-pdf', [ClienteController::class, 'exportPDF']);
 Route::apiResource('clientes', ClienteController::class);
 
 // Compras
@@ -83,6 +95,7 @@ Route::apiResource('compras', CompraController::class);
 
 // Cuotas de Compra
 Route::apiResource('compra-cuotas', CompraCuotaController::class);
+Route::get('compra-cuotas/compra-credito/{compraCreditoId}/details', [CompraCuotaController::class, 'getByCompraCreditoWithDetails']);
 Route::post('compra-cuotas/{id}/pagar', [CompraCuotaController::class, 'pagarCuota']);
 Route::get('compra-cuotas/compra-credito/{compraCreditoId}', [CompraCuotaController::class, 'getByCompraCredito']);
 
@@ -93,6 +106,7 @@ Route::apiResource('configuracion-trabajo', ConfiguracionTrabajoController::clas
 Route::apiResource('cotizaciones', CotizacionController::class);
 
 // Créditos de Venta
+Route::get('creditos-venta/{id}/details', [CreditoVentaController::class, 'getDetails']);
 Route::apiResource('creditos-venta', CreditoVentaController::class);
 
 // Cuotas de Crédito
@@ -106,9 +120,53 @@ Route::apiResource('empresas', EmpresaController::class);
 // Industrias
 Route::apiResource('industrias', IndustriaController::class);
 
+// Kardex
+Route::get('kardex/export-excel', [KardexController::class, 'exportExcel']);
+Route::get('kardex/export-pdf', [KardexController::class, 'exportPDF']);
+Route::get('kardex/resumen', [KardexController::class, 'getResumen']);
+Route::get('kardex/valorado', [KardexController::class, 'getKardexValorado']);
+Route::get('kardex/reporte/{articulo_id}', [KardexController::class, 'getReportePorArticulo']);
+Route::post('kardex/recalcular', [KardexController::class, 'recalcular']);
+Route::get('kardex/totales', [KardexController::class, 'getTotales']);
+Route::get('kardex/por-articulo/{articulo_id}', [KardexController::class, 'porArticulo']);
+Route::apiResource('kardex', KardexController::class);
+
+// Reportes
+Route::prefix('reportes')->group(function () {
+    // Ventas
+    Route::get('ventas', [ReporteController::class, 'ventas']);
+    Route::get('ventas/export-excel', [ReporteController::class, 'exportVentasExcel']);
+    Route::get('ventas/export-pdf', [ReporteController::class, 'exportVentasPDF']);
+
+    // Compras
+    Route::get('compras', [ReporteController::class, 'compras']);
+    Route::get('compras/export-excel', [ReporteController::class, 'exportComprasExcel']);
+
+    // Inventario
+    Route::get('inventario', [ReporteController::class, 'inventario']);
+    Route::get('inventario/export-excel', [ReporteController::class, 'exportInventarioExcel']);
+
+    // Créditos
+    Route::get('creditos', [ReporteController::class, 'creditos']);
+
+    // Otros
+    Route::get('productos-mas-vendidos', [ReporteController::class, 'productosMasVendidos']);
+    Route::get('stock-bajo', [ReporteController::class, 'stockBajo']);
+    Route::get('utilidad', [ReporteController::class, 'utilidad']);
+});
+
+// Devoluciones
+Route::apiResource('devoluciones', DevolucionController::class);
+
+// Conteos Físicos
+Route::post('conteos-fisicos/{id}/generar-ajustes', [ConteoFisicoController::class, 'generarAjustes']);
+Route::apiResource('conteos-fisicos', ConteoFisicoController::class);
+
 // Inventarios
 Route::get('inventarios/por-item', [InventarioController::class, 'porItem']);
 Route::get('inventarios/por-lotes', [InventarioController::class, 'porLotes']);
+Route::get('inventarios/export-excel', [InventarioController::class, 'exportExcel']);
+Route::get('inventarios/export-pdf', [InventarioController::class, 'exportPDF']);
 Route::apiResource('inventarios', InventarioController::class);
 
 // Marcas
@@ -129,6 +187,8 @@ Route::apiResource('precios', PrecioController::class);
 // Proveedores
 Route::get('proveedores/template/download', [ProveedorController::class, 'downloadTemplate']);
 Route::post('proveedores/import', [ProveedorController::class, 'import']);
+Route::get('proveedores/export-excel', [ProveedorController::class, 'exportExcel']);
+Route::get('proveedores/export-pdf', [ProveedorController::class, 'exportPDF']);
 Route::apiResource('proveedores', ProveedorController::class);
 
 // Roles
@@ -156,6 +216,24 @@ Route::post('traspasos/{traspaso}/rechazar', [TraspasoController::class, 'rechaz
 // Ventas
 Route::get('ventas/productos-inventario', [VentaController::class, 'productosInventario']);
 Route::apiResource('ventas', VentaController::class);
+// Dashboard
+Route::prefix('dashboard')->group(function () {
+    Route::get('kpis', [DashboardController::class, 'getKpis']);
+    Route::get('ventas-recientes', [DashboardController::class, 'getVentasRecientes']);
+    Route::get('productos-top', [DashboardController::class, 'getProductosTop']);
+    Route::get('chart-ventas', [DashboardController::class, 'getVentasChart']);
+    Route::get('chart-inventario', [DashboardController::class, 'getInventarioChart']);
+    Route::get('chart-comparativa', [DashboardController::class, 'getComparativaChart']);
+    Route::get('proveedores-top', [DashboardController::class, 'getProveedoresTop']);
+    Route::get('clientes-frecuentes', [DashboardController::class, 'getClientesFrecuentes']);
+    Route::get('productos-bajo-stock', [DashboardController::class, 'getProductosBajoStock']);
+    Route::get('productos-mas-comprados', [DashboardController::class, 'getProductosMasComprados']);
+    Route::get('top-stock', [DashboardController::class, 'getTopStock']);
+    Route::get('alertas', [DashboardController::class, 'getAlertas']);
+    Route::get('resumen-cajas', [DashboardController::class, 'getResumenCajas']);
+    Route::get('rotacion-inventario', [DashboardController::class, 'getRotacionInventario']);
+});
+
 // });
 
 // Ruta de salud/health check (pública)

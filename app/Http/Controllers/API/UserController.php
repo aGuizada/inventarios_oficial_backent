@@ -7,6 +7,9 @@ use App\Http\Traits\HasPagination;
 use App\Models\User;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
+use App\Exports\UsuariosExport;
+use Barryvdh\DomPDF\Facade\Pdf;
+use Maatwebsite\Excel\Facades\Excel;
 
 class UserController extends Controller
 {
@@ -93,5 +96,22 @@ class UserController extends Controller
     {
         $user->delete();
         return response()->json(null, 204);
+    }
+    /**
+     * Exporta usuarios a Excel
+     */
+    public function exportExcel()
+    {
+        return Excel::download(new UsuariosExport, 'usuarios.xlsx');
+    }
+
+    /**
+     * Exporta usuarios a PDF
+     */
+    public function exportPDF()
+    {
+        $users = User::with('rol')->get();
+        $pdf = Pdf::loadView('pdf.usuarios', compact('users'));
+        return $pdf->download('usuarios.pdf');
     }
 }
