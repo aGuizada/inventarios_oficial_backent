@@ -79,7 +79,14 @@ class VentaController extends Controller
     {
         $almacenId = $request->get('almacen_id');
 
-        $query = Inventario::with(['articulo', 'almacen'])
+        $query = Inventario::with([
+            'articulo.categoria',
+            'articulo.marca',
+            'articulo.medida',
+            'articulo.industria',
+            'articulo.proveedor',
+            'almacen'
+        ])
             ->where('saldo_stock', '>', 0);
 
         if ($almacenId) {
