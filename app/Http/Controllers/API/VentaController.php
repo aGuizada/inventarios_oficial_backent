@@ -42,13 +42,13 @@ class VentaController extends Controller
             $cantidad = (float) ($detalle['cantidad'] ?? 0);
             $precio = (float) ($detalle['precio'] ?? 0);
             $descuento = (float) ($detalle['descuento'] ?? 0);
-            
+
             // Calcular subtotal del detalle: (cantidad * precio) - descuento
             $subtotalDetalle = ($cantidad * $precio) - $descuento;
             $subtotalDetalle = max(0, $subtotalDetalle); // No permitir valores negativos
-            
+
             $subtotal += $subtotalDetalle;
-            
+
             // Guardar el detalle con el subtotal calculado
             $detallesCalculados[] = [
                 'articulo_id' => $detalle['articulo_id'],
@@ -73,7 +73,7 @@ class VentaController extends Controller
     public function index(Request $request)
     {
         try {
-            $query = Venta::with(['cliente', 'user', 'tipoVenta', 'tipoPago', 'caja', 'detalles.articulo']);
+            $query = Venta::with(['cliente', 'user', 'tipoVenta', 'tipoPago', 'caja']);
 
             $searchableFields = [
                 'id',
@@ -225,7 +225,7 @@ class VentaController extends Controller
         try {
             // Calcular totales en el backend
             $resultadoCalculo = $this->calcularTotales($request->detalles);
-            
+
             // Validar stock disponible antes de crear la venta
             $almacenId = $request->input('almacen_id'); // Necesitamos el almacén para validar stock
 
@@ -275,7 +275,7 @@ class VentaController extends Controller
                         'message' => 'Error de validación',
                         'errors' => [
                             "detalles.{$index}.cantidad" => [
-                                "Stock insuficiente. Stock disponible: {$inventario->saldo_stock}, solicitado: {$cantidadDeducir} ({$unidadMedida})",
+                                "Stock insuficiente. Disponible: {$inventario->saldo_stock} (Unidades). Solicitado: {$cantidadDeducir} (Unidades) para {$cantidadVenta} {$unidadMedida}(s).",
                                 "Artículo: " . ($articulo ? $articulo->nombre : "ID {$articuloId}")
                             ]
                         ]
@@ -286,7 +286,7 @@ class VentaController extends Controller
             // Preparar datos de la venta con el total calculado
             $ventaData = $request->except(['detalles', 'pagos', 'total']);
             $ventaData['total'] = $resultadoCalculo['total'];
-            
+
             $venta = Venta::create($ventaData);
 
             // Usar los detalles calculados
@@ -491,5 +491,24 @@ class VentaController extends Controller
 
         $venta->delete();
         return response()->json(null, 204);
+    }
+
+    public function imprimirComprobante($id, $formato)
+    {
+        $venta = Venta::with(['cliente', 'user', 'tipoVenta', 'tipoPago', 'detalles.articulo'])->find($id);
+
+        if (!$venta) {
+            return response()->json(['message' => 'Venta no encontrada'], 404);
+        }
+
+        if ($formato === 'rollo') {
+            $pdf = \Barryvdh\DomPDF\Facade\Pdf::loadView('pdf.venta_rollo', compact('venta'));
+            $pdf->setPaper([0, 0, 226.77, 500], 'portrait'); // 80mm width (approx 226pt)
+        } else {
+            $pdf = \Barryvdh\DomPDF\Facade\Pdf::loadView('pdf.venta_carta', compact('venta'));
+            $pdf->setPaper('letter', 'portrait');
+        }
+
+        return $pdf->download("venta_{$venta->num_comprobante}.pdf");
     }
 }

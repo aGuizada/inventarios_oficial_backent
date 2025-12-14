@@ -10,8 +10,13 @@ use App\Models\Inventario;
 use App\Models\Cliente;
 use App\Models\DetalleVenta;
 use App\Models\DetalleCompra;
+use App\Models\Articulo;
 use Illuminate\Support\Facades\DB;
 use Carbon\Carbon;
+use App\Http\Requests\DashboardFilterRequest;
+use App\Http\Resources\ArticuloUtilidadResource;
+use App\Http\Resources\DashboardKpisResource;
+
 
 class DashboardController extends Controller
 {
@@ -363,4 +368,295 @@ class DashboardController extends Controller
             'dias_analisis' => $diasAnalisis
         ]);
     }
+
+    /**
+     * KPIs del Dashboard con Filtros de Fecha
+     * Permite filtrar métricas por rangos de fecha personalizados
+     */
+    public function getKpisFiltrados(DashboardFilterRequest $request)
+    {
+        // Obtener fechas de inicio y fin
+        $fechas = $this->obtenerRangoFechas($request);
+        $fechaInicio = $fechas['inicio'];
+        $fechaFin = $fechas['fin'];
+        $sucursalId = $request->sucursal_id;
+
+        // === VENTAS ===
+        $ventasHoyQuery = Venta::whereDate('fecha_hora', Carbon::today());
+        $this->aplicarFiltroSucursal($ventasHoyQuery, $sucursalId);
+        $ventasHoy = $ventasHoyQuery->sum('total');
+
+        $ventasPeriodoQuery = Venta::whereBetween('fecha_hora', [$fechaInicio, $fechaFin]);
+        $this->aplicarFiltroSucursal($ventasPeriodoQuery, $sucursalId);
+        $ventasPeriodo = $ventasPeriodoQuery->sum('total');
+
+        $totalVentasQuery = Venta::query();
+        $this->aplicarFiltroSucursal($totalVentasQuery, $sucursalId);
+        $totalVentas = $totalVentasQuery->sum('total');
+
+        // === INVENTARIO (no se filtra por fecha ni sucursal directamente) ===
+        $productosBajoStock = Inventario::where('saldo_stock', '<', 10);
+        if ($sucursalId) {
+            $productosBajoStock->whereHas('almacen', function ($q) use ($sucursalId) {
+                $q->where('sucursal_id', $sucursalId);
+            });
+        }
+        $productosBajoStock = $productosBajoStock->count();
+
+        $productosAgotados = Inventario::where('saldo_stock', '<=', 0);
+        if ($sucursalId) {
+            $productosAgotados->whereHas('almacen', function ($q) use ($sucursalId) {
+                $q->where('sucursal_id', $sucursalId);
+            });
+        }
+        $productosAgotados = $productosAgotados->count();
+
+        $valorTotalInventario = Inventario::join('articulos', 'inventarios.articulo_id', '=', 'articulos.id');
+        if ($sucursalId) {
+            $valorTotalInventario->join('almacenes', 'inventarios.almacen_id', '=', 'almacenes.id')
+                ->where('almacenes.sucursal_id', $sucursalId);
+        }
+        $valorTotalInventario = $valorTotalInventario->sum(DB::raw('inventarios.saldo_stock * articulos.precio_costo_unid'));
+
+        // === COMPRAS ===
+        $comprasPeriodoQuery = CompraBase::whereBetween('fecha_hora', [$fechaInicio, $fechaFin]);
+        $this->aplicarFiltroSucursalCompras($comprasPeriodoQuery, $sucursalId);
+        $comprasPeriodo = $comprasPeriodoQuery->sum('total');
+
+        // === CRÉDITOS ===
+        $creditosVentaPendientes = DB::table('credito_ventas')
+            ->where('estado', '!=', 'Pagado')
+            ->count();
+        $montoCreditosVentas = DB::table('credito_ventas')
+            ->where('estado', '!=', 'Pagado')
+            ->sum('total');
+
+        // === MARGEN ===
+        $margenBruto = $ventasPeriodo > 0 && $comprasPeriodo > 0
+            ? (($ventasPeriodo - $comprasPeriodo) / $ventasPeriodo) * 100
+            : 0;
+
+        $kpis = [
+            // Ventas
+            'ventas_hoy' => round($ventasHoy, 2),
+            'ventas_mes' => round($ventasPeriodo, 2),
+            'ventas_mes_anterior' => 0,
+            'total_ventas' => round($totalVentas, 2),
+            'crecimiento_ventas' => 0,
+
+            // Inventario
+            'productos_bajo_stock' => $productosBajoStock,
+            'productos_agotados' => $productosAgotados,
+            'valor_total_inventario' => round($valorTotalInventario, 2),
+
+            // Compras
+            'compras_mes' => round($comprasPeriodo, 2),
+
+            // Créditos
+            'creditos_pendientes' => $creditosVentaPendientes,
+            'monto_creditos_pendientes' => round($montoCreditosVentas, 2),
+
+            // Análisis
+            'margen_bruto' => round($margenBruto, 2),
+
+            // Filtros aplicados
+            'fecha_inicio' => $fechaInicio->toDateString(),
+            'fecha_fin' => $fechaFin->toDateString(),
+            'periodo' => 'personalizado',
+        ];
+
+        return new DashboardKpisResource((object) $kpis);
+    }
+
+    /**
+     * Utilidad/Ganancia por Artículo
+     * Calcula y retorna el análisis de rentabilidad de cada artículo
+     */
+    public function getUtilidadArticulos(DashboardFilterRequest $request)
+    {
+        // Obtener rangos de fecha
+        $fechas = $this->obtenerRangoFechas($request);
+        $fechaInicio = $fechas['inicio'];
+        $fechaFin = $fechas['fin'];
+        $sucursalId = $request->sucursal_id;
+
+        // Query principal: Obtener ventas por artículo con cálculos de utilidad
+        $query = DB::table('detalle_ventas')
+            ->join('ventas', 'detalle_ventas.venta_id', '=', 'ventas.id')
+            ->join('articulos', 'detalle_ventas.articulo_id', '=', 'articulos.id')
+            ->whereBetween('ventas.fecha_hora', [$fechaInicio, $fechaFin]);
+
+        // Aplicar filtro de sucursal si está presente
+        if ($sucursalId) {
+            $query->join('cajas', 'ventas.caja_id', '=', 'cajas.id')
+                ->where('cajas.sucursal_id', $sucursalId);
+        }
+
+        $utilidades = $query->select(
+            'articulos.id as articulo_id',
+            'articulos.codigo',
+            'articulos.nombre',
+            DB::raw('SUM(detalle_ventas.cantidad) as cantidad_vendida'),
+            DB::raw('SUM(detalle_ventas.cantidad * detalle_ventas.precio) as total_ventas'),
+            DB::raw('SUM(detalle_ventas.cantidad * articulos.precio_costo_unid) as costo_total'),
+            DB::raw('SUM(detalle_ventas.cantidad * detalle_ventas.precio) - SUM(detalle_ventas.cantidad * articulos.precio_costo_unid) as utilidad_bruta'),
+            DB::raw('CASE 
+                    WHEN SUM(detalle_ventas.cantidad * detalle_ventas.precio) > 0 
+                    THEN ((SUM(detalle_ventas.cantidad * detalle_ventas.precio) - SUM(detalle_ventas.cantidad * articulos.precio_costo_unid)) / SUM(detalle_ventas.cantidad * detalle_ventas.precio)) * 100 
+                    ELSE 0 
+                END as margen_porcentaje')
+        )
+            ->groupBy('articulos.id', 'articulos.codigo', 'articulos.nombre')
+            ->orderByDesc('utilidad_bruta')
+            ->get();
+
+        return ArticuloUtilidadResource::collection($utilidades);
+    }
+
+    /**
+     * Gráfica de Ventas con Filtro de Fecha
+     */
+    public function getVentasChartFiltrado(DashboardFilterRequest $request)
+    {
+        $fechas = $this->obtenerRangoFechas($request);
+        $fechaInicio = $fechas['inicio'];
+        $fechaFin = $fechas['fin'];
+        $sucursalId = $request->sucursal_id;
+
+        $labels = [];
+        $data = [];
+
+        $diasDiferencia = $fechaInicio->diffInDays($fechaFin) + 1;
+
+        // Si el rango es mayor a 31 días, agrupar por mes
+        if ($diasDiferencia > 31) {
+            $meses = [];
+            $mesActual = $fechaInicio->copy()->startOfMonth();
+            $mesFinal = $fechaFin->copy()->startOfMonth();
+
+            while ($mesActual <= $mesFinal) {
+                $meses[] = $mesActual->copy();
+                $mesActual->addMonth();
+            }
+
+            foreach ($meses as $mes) {
+                $labels[] = $mes->format('M Y');
+
+                $query = Venta::whereYear('fecha_hora', $mes->year)
+                    ->whereMonth('fecha_hora', $mes->month);
+
+                $this->aplicarFiltroSucursal($query, $sucursalId);
+                $totalMes = $query->sum('total');
+
+                $data[] = $totalMes;
+            }
+        } else {
+            // Agrupar por día
+            for ($i = 0; $i < $diasDiferencia; $i++) {
+                $fecha = $fechaInicio->copy()->addDays($i);
+                $labels[] = $fecha->format('d/m');
+
+                $query = Venta::whereDate('fecha_hora', $fecha);
+                $this->aplicarFiltroSucursal($query, $sucursalId);
+                $totalDia = $query->sum('total');
+
+                $data[] = $totalDia;
+            }
+        }
+
+        return response()->json([
+            'labels' => $labels,
+            'data' => $data,
+            'periodo' => [
+                'inicio' => $fechaInicio->toDateString(),
+                'fin' => $fechaFin->toDateString(),
+            ],
+        ]);
+    }
+
+
+    /**
+     * Obtener lista de sucursales para filtros
+     */
+    public function getSucursales()
+    {
+        return \App\Models\Sucursal::select('id', 'nombre')
+            ->where('estado', true)
+            ->orderBy('nombre')
+            ->get();
+    }
+
+    /**
+     * Método privado para obtener rango de fechas desde el request
+     */
+    private function obtenerRangoFechas(DashboardFilterRequest $request): array
+    {
+        $fechaInicio = null;
+        $fechaFin = null;
+
+        // Modo 1: Rango de fechas específico
+        if ($request->has('fecha_inicio') && $request->has('fecha_fin')) {
+            $fechaInicio = Carbon::parse($request->fecha_inicio)->startOfDay();
+            $fechaFin = Carbon::parse($request->fecha_fin)->endOfDay();
+        }
+        // Modo 2: Año, mes, y opcionalmente día
+        elseif ($request->has('year')) {
+            $year = $request->year;
+            $month = $request->month ?? null;
+            $day = $request->day ?? null;
+
+            if ($day && $month) {
+                // Día específico
+                $fechaInicio = Carbon::createFromDate($year, $month, $day)->startOfDay();
+                $fechaFin = Carbon::createFromDate($year, $month, $day)->endOfDay();
+            } elseif ($month) {
+                // Mes completo
+                $fechaInicio = Carbon::createFromDate($year, $month, 1)->startOfMonth();
+                $fechaFin = Carbon::createFromDate($year, $month, 1)->endOfMonth();
+            } else {
+                // Año completo
+                $fechaInicio = Carbon::createFromDate($year, 1, 1)->startOfYear();
+                $fechaFin = Carbon::createFromDate($year, 12, 31)->endOfYear();
+            }
+        }
+        // Por defecto: último mes
+        else {
+            $fechaInicio = Carbon::now()->startOfMonth();
+            $fechaFin = Carbon::now()->endOfDay();
+        }
+
+        return [
+            'inicio' => $fechaInicio,
+            'fin' => $fechaFin,
+        ];
+    }
+
+    /**
+     * Método privado para aplicar filtro de sucursal a queries de ventas
+     * Filtra por sucursal a través de la relación: ventas -> caja -> sucursal
+     */
+    private function aplicarFiltroSucursal($query, $sucursalId)
+    {
+        if ($sucursalId) {
+            $query->whereHas('caja', function ($q) use ($sucursalId) {
+                $q->where('sucursal_id', $sucursalId);
+            });
+        }
+        return $query;
+    }
+
+    /**
+     * Método privado para aplicar filtro de sucursal a queries de compras
+     * Filtra por sucursal a través de la relación: compras_base -> caja -> sucursal
+     */
+    private function aplicarFiltroSucursalCompras($query, $sucursalId)
+    {
+        if ($sucursalId) {
+            $query->whereHas('caja', function ($q) use ($sucursalId) {
+                $q->where('sucursal_id', $sucursalId);
+            });
+        }
+        return $query;
+    }
 }
+
