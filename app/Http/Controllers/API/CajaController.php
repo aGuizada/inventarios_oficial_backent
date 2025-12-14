@@ -87,6 +87,55 @@ class CajaController extends Controller
                 'estado.boolean' => 'El estado debe ser verdadero o falso.',
             ]);
 
+            // Validar que no exista una caja abierta para la misma sucursal
+            $sucursalId = $request->sucursal_id;
+            $estado = $request->estado ?? $request->input('estado');
+            
+            // Verificar si se está intentando abrir una caja (estado = 1, '1', true, o 'abierta')
+            $isOpeningCaja = $estado === 1 || 
+                            $estado === '1' || 
+                            $estado === true || 
+                            $estado === 'abierta' ||
+                            (is_null($estado) && !$request->has('fecha_cierre')); // Si no tiene fecha_cierre, se considera apertura
+            
+            if ($isOpeningCaja) {
+                // Buscar si ya existe una caja abierta para esta sucursal
+                // Una caja está abierta si:
+                // 1. No tiene fecha_cierre (NULL)
+                // 2. Y tiene estado que indica abierta (1, '1', true, 'abierta')
+                // 3. Y NO tiene estado que indica cerrada (0, '0', false, 'cerrada')
+                $cajaAbierta = Caja::with('sucursal')
+                    ->where('sucursal_id', $sucursalId)
+                    ->whereNull('fecha_cierre') // Las cajas cerradas normalmente tienen fecha_cierre
+                    ->where(function($query) {
+                        // Solo considerar estados que indican caja abierta
+                        $query->where('estado', 1)
+                              ->orWhere('estado', '1')
+                              ->orWhere('estado', true)
+                              ->orWhere('estado', 'abierta');
+                    })
+                    // Excluir explícitamente estados que indican caja cerrada
+                    ->where(function($query) {
+                        $query->where('estado', '!=', 0)
+                              ->where('estado', '!=', '0')
+                              ->where('estado', '!=', false)
+                              ->where('estado', '!=', 'cerrada');
+                    })
+                    ->first();
+                
+                if ($cajaAbierta) {
+                    $sucursalNombre = $cajaAbierta->sucursal ? $cajaAbierta->sucursal->nombre : 'esta sucursal';
+                    return response()->json([
+                        'message' => 'Error de validación',
+                        'errors' => [
+                            'sucursal_id' => [
+                                "Ya existe una caja abierta para {$sucursalNombre}. Por favor, cierre la caja existente antes de abrir una nueva en la misma sucursal."
+                            ]
+                        ]
+                    ], 422);
+                }
+            }
+
             $caja = Caja::create($request->all());
             $caja->load(['sucursal', 'user']);
 
@@ -182,32 +231,25 @@ class CajaController extends Controller
     }
 
     /**
-     * Get detailed calculations for a specific caja
-     * Includes: ventas (contado, credito, qr), compras, transacciones, saldos
+     * Calcula los totales de una caja basándose en ventas, compras y transacciones
+     * 
+     * @param int $cajaId ID de la caja
+     * @return array Array con todos los cálculos
      */
-    public function getCajaDetails($id)
+    private function calcularTotalesCaja($cajaId)
     {
-        $caja = Caja::with(['sucursal', 'user'])->find($id);
-
-        if (!$caja) {
-            return response()->json([
-                'message' => 'Caja no encontrada',
-                'error' => "No se encontró una caja con el ID: {$id}"
-            ], 404);
-        }
-
         // Obtener ventas de la caja
-        $ventas = \App\Models\Venta::where('caja_id', $id)
+        $ventas = \App\Models\Venta::where('caja_id', $cajaId)
             ->with(['cliente', 'tipoVenta', 'tipoPago'])
             ->get();
 
         // Obtener compras de la caja (usando compras_base)
-        $compras = \App\Models\CompraBase::where('caja_id', $id)
+        $compras = \App\Models\CompraBase::where('caja_id', $cajaId)
             ->with(['proveedor'])
             ->get();
 
         // Obtener transacciones de caja
-        $transacciones = \App\Models\TransaccionCaja::where('caja_id', $id)->get();
+        $transacciones = \App\Models\TransaccionCaja::where('caja_id', $cajaId)->get();
 
         // Calcular ventas al contado
         $ventasContado = $ventas->filter(function ($v) {
@@ -228,10 +270,13 @@ class CajaController extends Controller
         })->sum('total');
 
         // Calcular compras al contado
-        $comprasContado = $compras->where('tipo_compra', 'contado')->sum('total');
+        $comprasContado = $compras->where('tipo_compra', 'CONTADO')->sum('total') + 
+                         $compras->where('tipo_compra', 'contado')->sum('total');
 
         // Calcular compras a crédito
-        $comprasCredito = $compras->where('tipo_compra', 'credito')->sum('total');
+        $comprasCredito = $compras->where('tipo_compra', 'CREDITO')->sum('total') + 
+                         $compras->where('tipo_compra', 'credito')->sum('total') +
+                         $compras->where('tipo_compra', 'CRÉDITO')->sum('total');
 
         // Calcular entradas (depositos/ingresos)
         $entradas = $transacciones->where('transaccion', 'ingreso')->sum('importe');
@@ -245,26 +290,95 @@ class CajaController extends Controller
         // Total compras
         $totalCompras = $compras->sum('total');
 
-        // Saldo final calculado
-        $saldoFinal = ($caja->saldo_inicial ?? 0) + $totalVentas + $entradas - $totalCompras - $salidas;
+        return [
+            'ventas_contado' => round($ventasContado, 2),
+            'ventas_credito' => round($ventasCredito, 2),
+            'ventas_qr' => round($ventasQR, 2),
+            'compras_contado' => round($comprasContado, 2),
+            'compras_credito' => round($comprasCredito, 2),
+            'entradas' => round($entradas, 2),
+            'salidas' => round($salidas, 2),
+            'total_ventas' => round($totalVentas, 2),
+            'total_compras' => round($totalCompras, 2)
+        ];
+    }
+
+    /**
+     * Get detailed calculations for a specific caja
+     * Includes: ventas (contado, credito, qr), compras, transacciones, saldos
+     */
+    public function getCajaDetails($id)
+    {
+        $caja = Caja::with(['sucursal', 'user'])->find($id);
+
+        if (!$caja) {
+            return response()->json([
+                'message' => 'Caja no encontrada',
+                'error' => "No se encontró una caja con el ID: {$id}"
+            ], 404);
+        }
+
+        // Calcular todos los totales en el backend
+        $calculado = $this->calcularTotalesCaja($id);
+
+        // Calcular saldo final
+        $saldoInicial = (float) ($caja->saldo_inicial ?? 0);
+        $saldoFinal = $saldoInicial + $calculado['total_ventas'] + $calculado['entradas'] - 
+                     $calculado['total_compras'] - $calculado['salidas'];
+        $calculado['saldo_final'] = round($saldoFinal, 2);
+
+        // Obtener ventas, compras y transacciones para mostrar en detalle
+        $ventas = \App\Models\Venta::where('caja_id', $id)
+            ->with(['cliente', 'tipoVenta', 'tipoPago'])
+            ->get();
+
+        $compras = \App\Models\CompraBase::where('caja_id', $id)
+            ->with(['proveedor'])
+            ->get();
+
+        $transacciones = \App\Models\TransaccionCaja::where('caja_id', $id)->get();
 
         return response()->json([
             'caja' => $caja,
-            'calculado' => [
-                'ventas_contado' => round($ventasContado, 2),
-                'ventas_credito' => round($ventasCredito, 2),
-                'ventas_qr' => round($ventasQR, 2),
-                'compras_contado' => round($comprasContado, 2),
-                'compras_credito' => round($comprasCredito, 2),
-                'entradas' => round($entradas, 2),
-                'salidas' => round($salidas, 2),
-                'total_ventas' => round($totalVentas, 2),
-                'total_compras' => round($totalCompras, 2),
-                'saldo_final' => round($saldoFinal, 2)
-            ],
+            'calculado' => $calculado,
             'ventas' => $ventas,
             'compras' => $compras,
             'transacciones' => $transacciones
+        ]);
+    }
+
+    /**
+     * Calcula los totales para todas las cajas (usado en listado)
+     */
+    public function calcularTotalesCajas(Request $request)
+    {
+        $cajas = Caja::with(['sucursal', 'user'])->get();
+        
+        $cajasConTotales = $cajas->map(function ($caja) {
+            $calculado = $this->calcularTotalesCaja($caja->id);
+            
+            // Calcular saldo final
+            $saldoInicial = (float) ($caja->saldo_inicial ?? 0);
+            $saldoFinal = $saldoInicial + $calculado['total_ventas'] + $calculado['entradas'] - 
+                         $calculado['total_compras'] - $calculado['salidas'];
+            
+            return [
+                'id' => $caja->id,
+                'saldo_caja' => round($saldoFinal, 2),
+                'ventas' => $calculado['total_ventas'],
+                'compras' => $calculado['total_compras'],
+                'depositos' => $calculado['entradas'],
+                'salidas' => $calculado['salidas'],
+                'ventas_contado' => $calculado['ventas_contado'],
+                'ventas_credito' => $calculado['ventas_credito'],
+                'compras_contado' => $calculado['compras_contado'],
+                'compras_credito' => $calculado['compras_credito']
+            ];
+        });
+        
+        return response()->json([
+            'success' => true,
+            'data' => $cajasConTotales
         ]);
     }
 

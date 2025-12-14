@@ -56,6 +56,50 @@ class CompraController extends Controller
         }
     }
 
+    /**
+     * Calcula los totales de una compra basándose en los detalles
+     * 
+     * @param array $detalles Array de detalles de compra
+     * @param float $descuentoGlobal Descuento global aplicado
+     * @return array ['subtotal' => float, 'total' => float, 'detalles_calculados' => array]
+     */
+    private function calcularTotales($detalles, $descuentoGlobal = 0)
+    {
+        $subtotal = 0;
+        $detallesCalculados = [];
+
+        foreach ($detalles as $detalle) {
+            $cantidad = (float) ($detalle['cantidad'] ?? 0);
+            $precioUnitario = (float) ($detalle['precio_unitario'] ?? 0);
+            $descuentoIndividual = (float) ($detalle['descuento'] ?? 0);
+            
+            // Calcular subtotal del detalle: (cantidad * precio_unitario) - descuento_individual
+            $subtotalDetalle = ($cantidad * $precioUnitario) - $descuentoIndividual;
+            $subtotalDetalle = max(0, $subtotalDetalle); // No permitir valores negativos
+            
+            $subtotal += $subtotalDetalle;
+            
+            // Guardar el detalle con el subtotal calculado
+            $detallesCalculados[] = [
+                'articulo_id' => $detalle['articulo_id'],
+                'cantidad' => $cantidad,
+                'precio_unitario' => $precioUnitario,
+                'descuento' => $descuentoIndividual,
+                'subtotal' => $subtotalDetalle
+            ];
+        }
+
+        // Aplicar descuento global al total
+        $descuentoGlobal = (float) $descuentoGlobal;
+        $total = max(0, $subtotal - $descuentoGlobal);
+
+        return [
+            'subtotal' => round($subtotal, 2),
+            'total' => round($total, 2),
+            'detalles_calculados' => $detallesCalculados
+        ];
+    }
+
     public function store(Request $request)
     {
         $request->validate([
@@ -66,18 +110,16 @@ class CompraController extends Controller
             'serie_comprobante' => 'nullable|string|max:50',
             'num_comprobante' => 'nullable|string|max:50',
             'fecha_hora' => 'required|date',
-            'total' => 'required|numeric',
             'estado' => 'nullable|string|max:50',
             'almacen_id' => 'required|exists:almacenes,id',
             'caja_id' => 'nullable|exists:cajas,id',
-            'descuento_global' => 'nullable|numeric',
+            'descuento_global' => 'nullable|numeric|min:0',
             'tipo_compra' => 'required|in:contado,credito',
-            'detalles' => 'required|array',
+            'detalles' => 'required|array|min:1',
             'detalles.*.articulo_id' => 'required|exists:articulos,id',
             'detalles.*.cantidad' => 'required|integer|min:1',
-            'detalles.*.precio_unitario' => 'required|numeric',
-            'detalles.*.descuento' => 'nullable|numeric',
-            'detalles.*.subtotal' => 'required|numeric',
+            'detalles.*.precio_unitario' => 'required|numeric|min:0',
+            'detalles.*.descuento' => 'nullable|numeric|min:0',
             // For credito
             'numero_cuotas' => 'required_if:tipo_compra,credito|integer|min:1',
             'monto_pagado' => 'nullable|numeric|min:0',
@@ -110,14 +152,19 @@ class CompraController extends Controller
                 return response()->json(['error' => 'No se pudo determinar el proveedor'], 400);
             }
 
+            // Calcular totales en el backend
+            $descuentoGlobal = (float) ($request->descuento_global ?? 0);
+            $resultadoCalculo = $this->calcularTotales($request->detalles, $descuentoGlobal);
+            
             // Preparar datos de la compra
-            $compraData = $request->except(['detalles', 'numero_cuotas', 'monto_pagado', 'proveedor_nombre']);
+            $compraData = $request->except(['detalles', 'numero_cuotas', 'monto_pagado', 'proveedor_nombre', 'total']);
             $compraData['proveedor_id'] = $proveedorId;
 
             // Asegurar tipos correctos
             $compraData['user_id'] = (int) $compraData['user_id'];
             $compraData['almacen_id'] = (int) $compraData['almacen_id'];
-            $compraData['total'] = (float) $compraData['total'];
+            $compraData['total'] = $resultadoCalculo['total']; // Usar el total calculado
+            $compraData['descuento_global'] = $descuentoGlobal;
 
             // Convertir tipo_compra a mayúsculas para que coincida con el enum de la base de datos
             if (isset($compraData['tipo_compra'])) {
@@ -182,8 +229,8 @@ class CompraController extends Controller
 
             $compraBase = CompraBase::create($compraData);
 
-            // Crear detalles
-            foreach ($request->detalles as $index => $detalle) {
+            // Crear detalles usando los valores calculados
+            foreach ($resultadoCalculo['detalles_calculados'] as $index => $detalle) {
                 if (!isset($detalle['articulo_id']) || !isset($detalle['cantidad'])) {
                     \Log::warning('Detalle sin articulo_id o cantidad', ['detalle' => $detalle, 'index' => $index]);
                     continue;
@@ -212,8 +259,8 @@ class CompraController extends Controller
                     'compra_base_id' => $compraBase->id,
                     'articulo_id' => $articuloId,
                     'cantidad' => (int) $detalle['cantidad'],
-                    'precio' => (float) ($detalle['precio_unitario'] ?? $detalle['precio'] ?? 0),
-                    'descuento' => (float) ($detalle['descuento'] ?? 0),
+                    'precio' => (float) $detalle['precio_unitario'],
+                    'descuento' => (float) $detalle['descuento'],
                 ]);
 
                 // Actualizar inventario
@@ -286,7 +333,7 @@ class CompraController extends Controller
                         ->first();
 
                     $saldoKardex = ($kardexAnterior->cantidad_saldo ?? 0) + $cantidadComprada;
-                    $costoUnitario = (float) ($detalle['precio_unitario'] ?? $detalle['precio'] ?? 0);
+                    $costoUnitario = (float) $detalle['precio_unitario'];
 
                     Kardex::create([
                         'fecha' => $compraData['fecha_hora'],
@@ -578,18 +625,16 @@ class CompraController extends Controller
             'serie_comprobante' => 'nullable|string|max:50',
             'num_comprobante' => 'nullable|string|max:50',
             'fecha_hora' => 'required|date',
-            'total' => 'required|numeric',
             'estado' => 'nullable|string|max:50',
             'almacen_id' => 'required|exists:almacenes,id',
             'caja_id' => 'nullable|exists:cajas,id',
-            'descuento_global' => 'nullable|numeric',
+            'descuento_global' => 'nullable|numeric|min:0',
             'tipo_compra' => 'required|in:contado,credito',
             'detalles' => 'nullable|array',
             'detalles.*.articulo_id' => 'required|exists:articulos,id',
             'detalles.*.cantidad' => 'required|integer|min:1',
-            'detalles.*.precio_unitario' => 'required|numeric',
-            'detalles.*.descuento' => 'nullable|numeric',
-            'detalles.*.subtotal' => 'required|numeric',
+            'detalles.*.precio_unitario' => 'required|numeric|min:0',
+            'detalles.*.descuento' => 'nullable|numeric|min:0',
         ]);
 
         DB::beginTransaction();
@@ -624,14 +669,23 @@ class CompraController extends Controller
             $tipoCompraAnterior = strtoupper(trim($compra->tipo_compra));
             $cajaIdAnterior = $compra->caja_id;
 
+            // Calcular totales en el backend
+            $descuentoGlobal = (float) ($request->descuento_global ?? 0);
+            $detallesParaCalcular = $request->has('detalles') && is_array($request->detalles) 
+                ? $request->detalles 
+                : [];
+            
+            $resultadoCalculo = $this->calcularTotales($detallesParaCalcular, $descuentoGlobal);
+
             // Preparar datos de la compra
-            $compraData = $request->except(['detalles', 'proveedor_nombre']);
+            $compraData = $request->except(['detalles', 'proveedor_nombre', 'total']);
             $compraData['proveedor_id'] = $proveedorId;
 
             // Asegurar tipos correctos
             $compraData['user_id'] = (int) $compraData['user_id'];
             $compraData['almacen_id'] = (int) $compraData['almacen_id'];
-            $compraData['total'] = (float) $compraData['total'];
+            $compraData['total'] = $resultadoCalculo['total']; // Usar el total calculado
+            $compraData['descuento_global'] = $descuentoGlobal;
 
             // Formatear fecha_hora
             if (isset($compraData['fecha_hora'])) {
@@ -686,9 +740,9 @@ class CompraController extends Controller
             // Eliminar detalles existentes
             DetalleCompra::where('compra_base_id', $compraId)->delete();
 
-            // Crear nuevos detalles
-            if ($request->has('detalles') && is_array($request->detalles)) {
-                foreach ($request->detalles as $index => $detalle) {
+            // Crear nuevos detalles usando los valores calculados
+            if (!empty($resultadoCalculo['detalles_calculados'])) {
+                foreach ($resultadoCalculo['detalles_calculados'] as $index => $detalle) {
                     if (!isset($detalle['articulo_id']) || !isset($detalle['cantidad'])) {
                         \Log::warning('Detalle sin articulo_id o cantidad', ['detalle' => $detalle, 'index' => $index]);
                         continue;
@@ -717,8 +771,8 @@ class CompraController extends Controller
                         'compra_base_id' => $compraId,
                         'articulo_id' => $articuloId,
                         'cantidad' => (int) $detalle['cantidad'],
-                        'precio' => (float) ($detalle['precio_unitario'] ?? $detalle['precio'] ?? 0),
-                        'descuento' => (float) ($detalle['descuento'] ?? 0),
+                        'precio' => (float) $detalle['precio_unitario'],
+                        'descuento' => (float) $detalle['descuento'],
                     ]);
 
                     // Actualizar inventario

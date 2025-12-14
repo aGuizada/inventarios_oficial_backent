@@ -27,6 +27,49 @@ class VentaController extends Controller
         $this->kardexService = $kardexService;
     }
 
+    /**
+     * Calcula los totales de una venta basándose en los detalles
+     * 
+     * @param array $detalles Array de detalles de venta
+     * @return array ['subtotal' => float, 'total' => float, 'detalles_calculados' => array]
+     */
+    private function calcularTotales($detalles)
+    {
+        $subtotal = 0;
+        $detallesCalculados = [];
+
+        foreach ($detalles as $detalle) {
+            $cantidad = (float) ($detalle['cantidad'] ?? 0);
+            $precio = (float) ($detalle['precio'] ?? 0);
+            $descuento = (float) ($detalle['descuento'] ?? 0);
+            
+            // Calcular subtotal del detalle: (cantidad * precio) - descuento
+            $subtotalDetalle = ($cantidad * $precio) - $descuento;
+            $subtotalDetalle = max(0, $subtotalDetalle); // No permitir valores negativos
+            
+            $subtotal += $subtotalDetalle;
+            
+            // Guardar el detalle con el subtotal calculado
+            $detallesCalculados[] = [
+                'articulo_id' => $detalle['articulo_id'],
+                'cantidad' => $cantidad,
+                'precio' => $precio,
+                'descuento' => $descuento,
+                'unidad_medida' => $detalle['unidad_medida'] ?? 'Unidad',
+                'subtotal' => $subtotalDetalle
+            ];
+        }
+
+        // El total es igual al subtotal (no hay descuento global en ventas)
+        $total = $subtotal;
+
+        return [
+            'subtotal' => round($subtotal, 2),
+            'total' => round($total, 2),
+            'detalles_calculados' => $detallesCalculados
+        ];
+    }
+
     public function index(Request $request)
     {
         try {
@@ -123,14 +166,14 @@ class VentaController extends Controller
                 'serie_comprobante' => 'nullable|string|max:50',
                 'num_comprobante' => 'nullable|string|max:50',
                 'fecha_hora' => 'required|date',
-                'total' => 'required|numeric',
                 'estado' => 'boolean',
                 'caja_id' => 'nullable|exists:cajas,id',
-                'detalles' => 'required|array',
+                'almacen_id' => 'required|exists:almacenes,id',
+                'detalles' => 'required|array|min:1',
                 'detalles.*.articulo_id' => 'required|exists:articulos,id',
                 'detalles.*.cantidad' => 'required|integer|min:1',
-                'detalles.*.precio' => 'required|numeric',
-                'detalles.*.descuento' => 'nullable|numeric',
+                'detalles.*.precio' => 'required|numeric|min:0',
+                'detalles.*.descuento' => 'nullable|numeric|min:0',
                 'detalles.*.unidad_medida' => 'nullable|string|in:Unidad,Paquete,Centimetro',
                 'pagos' => 'nullable|array',
                 'pagos.*.tipo_pago_id' => 'required|exists:tipo_pagos,id',
@@ -152,8 +195,6 @@ class VentaController extends Controller
                 'num_comprobante.max' => 'El número de comprobante no puede tener más de 50 caracteres.',
                 'fecha_hora.required' => 'La fecha y hora son obligatorias.',
                 'fecha_hora.date' => 'La fecha y hora deben ser una fecha válida.',
-                'total.required' => 'El total es obligatorio.',
-                'total.numeric' => 'El total debe ser un número.',
                 'estado.boolean' => 'El estado debe ser verdadero o falso.',
                 'caja_id.exists' => 'La caja seleccionada no existe.',
                 'detalles.required' => 'Los detalles de la venta son obligatorios.',
@@ -182,6 +223,9 @@ class VentaController extends Controller
 
         DB::beginTransaction();
         try {
+            // Calcular totales en el backend
+            $resultadoCalculo = $this->calcularTotales($request->detalles);
+            
             // Validar stock disponible antes de crear la venta
             $almacenId = $request->input('almacen_id'); // Necesitamos el almacén para validar stock
 
@@ -239,22 +283,27 @@ class VentaController extends Controller
                 }
             }
 
-            $venta = Venta::create($request->except(['detalles', 'pagos']));
+            // Preparar datos de la venta con el total calculado
+            $ventaData = $request->except(['detalles', 'pagos', 'total']);
+            $ventaData['total'] = $resultadoCalculo['total'];
+            
+            $venta = Venta::create($ventaData);
 
-            foreach ($request->detalles as $detalle) {
+            // Usar los detalles calculados
+            foreach ($resultadoCalculo['detalles_calculados'] as $detalle) {
                 DetalleVenta::create([
                     'venta_id' => $venta->id,
                     'articulo_id' => $detalle['articulo_id'],
                     'cantidad' => $detalle['cantidad'],
                     'precio' => $detalle['precio'],
-                    'descuento' => $detalle['descuento'] ?? 0,
-                    'unidad_medida' => $detalle['unidad_medida'] ?? 'Unidad',
+                    'descuento' => $detalle['descuento'],
+                    'unidad_medida' => $detalle['unidad_medida'],
                 ]);
 
                 // Calcular cantidad a deducir según unidad de medida
                 $articuloId = (int) $detalle['articulo_id'];
                 $cantidadVenta = (int) $detalle['cantidad'];
-                $unidadMedida = $detalle['unidad_medida'] ?? 'Unidad';
+                $unidadMedida = $detalle['unidad_medida'];
 
                 $articulo = Articulo::find($articuloId);
                 $cantidadDeducir = $cantidadVenta;
@@ -276,7 +325,7 @@ class VentaController extends Controller
                     'cantidad_entrada' => 0,
                     'cantidad_salida' => $cantidadDeducir,
                     'costo_unitario' => $articulo->precio_costo ?? 0, // Usar costo del artículo
-                    'precio_unitario' => $detalle['precio'], // Precio de venta
+                    'precio_unitario' => $detalle['precio'], // Precio de venta (ya calculado)
                     'observaciones' => 'Venta ' . ($request->tipo_comprobante ?? 'ticket') . ' ' . ($request->num_comprobante ?? ''),
                     'usuario_id' => $request->user_id,
                     'venta_id' => $venta->id
@@ -298,7 +347,7 @@ class VentaController extends Controller
                 \App\Models\DetallePago::create([
                     'venta_id' => $venta->id,
                     'tipo_pago_id' => $request->tipo_pago_id,
-                    'monto' => $request->total,
+                    'monto' => $resultadoCalculo['total'], // Usar el total calculado
                     'referencia' => null
                 ]);
             }

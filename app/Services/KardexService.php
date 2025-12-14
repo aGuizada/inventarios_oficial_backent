@@ -6,6 +6,7 @@ use App\Models\Kardex;
 use App\Models\Inventario;
 use App\Models\Articulo;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schema;
 use Carbon\Carbon;
 use Exception;
 
@@ -16,21 +17,50 @@ class KardexService
      */
     public function calcularSaldo(int $articuloId, int $almacenId): float
     {
-        $ultimoMovimiento = Kardex::where('articulo_id', $articuloId)
-            ->where('almacen_id', $almacenId)
-            ->orderBy('fecha', 'desc')
-            ->orderBy('id', 'desc')
-            ->first();
+        try {
+            // Verificar si la tabla existe
+            if (!\Schema::hasTable('kardex')) {
+                return 0;
+            }
+            
+            $ultimoMovimiento = Kardex::where('articulo_id', $articuloId)
+                ->where('almacen_id', $almacenId)
+                ->orderBy('fecha', 'desc')
+                ->orderBy('id', 'desc')
+                ->first();
 
-        return $ultimoMovimiento ? $ultimoMovimiento->cantidad_saldo : 0;
+            return $ultimoMovimiento ? $ultimoMovimiento->cantidad_saldo : 0;
+        } catch (\Exception $e) {
+            // Si hay error (tabla no existe), retornar 0
+            \Log::warning('Error al calcular saldo de kardex: ' . $e->getMessage());
+            return 0;
+        }
     }
 
     /**
      * Registra un movimiento en el kardex
      * @throws Exception
      */
-    public function registrarMovimiento(array $datos): Kardex
+    public function registrarMovimiento(array $datos): ?Kardex
     {
+        // Si la tabla kardex no existe, solo actualizar inventario y stock
+        if (!Schema::hasTable('kardex')) {
+            \Log::warning('Tabla kardex no existe. Actualizando solo inventario y stock.');
+            try {
+                $cantidadEntrada = $datos['cantidad_entrada'] ?? 0;
+                $cantidadSalida = $datos['cantidad_salida'] ?? 0;
+                
+                // Actualizar inventario y stock sin registrar en kardex
+                $this->actualizarInventario($datos['articulo_id'], $datos['almacen_id'], $cantidadEntrada, $cantidadSalida);
+                $this->actualizarStockArticulo($datos['articulo_id'], $cantidadEntrada, $cantidadSalida);
+                
+                return null;
+            } catch (Exception $e) {
+                \Log::error('Error al actualizar inventario sin kardex: ' . $e->getMessage());
+                throw $e;
+            }
+        }
+        
         DB::beginTransaction();
         try {
             // Validar datos requeridos

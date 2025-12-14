@@ -80,6 +80,7 @@ Route::apiResource('articulos', ArticuloController::class);
 
 // Cajas
 Route::get('cajas/{id}/details', [CajaController::class, 'getCajaDetails']);
+Route::get('cajas/calcular-totales', [CajaController::class, 'calcularTotalesCajas']);
 Route::apiResource('cajas', CajaController::class);
 
 // Categorías
