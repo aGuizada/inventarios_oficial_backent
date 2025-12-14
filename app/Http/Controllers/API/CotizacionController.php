@@ -15,6 +15,48 @@ class CotizacionController extends Controller
 {
     use HasPagination;
 
+    /**
+     * Calcula los totales de una cotización basándose en los detalles
+     * 
+     * @param array $detalles Array de detalles de cotización
+     * @return array ['subtotal' => float, 'total' => float, 'detalles_calculados' => array]
+     */
+    private function calcularTotales($detalles)
+    {
+        $subtotal = 0;
+        $detallesCalculados = [];
+
+        foreach ($detalles as $detalle) {
+            $cantidad = (float) ($detalle['cantidad'] ?? 0);
+            $precioUnitario = (float) ($detalle['precio_unitario'] ?? $detalle['precio'] ?? 0);
+            $descuento = (float) ($detalle['descuento'] ?? 0);
+            
+            // Calcular subtotal del detalle: (cantidad * precio_unitario) - descuento
+            $subtotalDetalle = ($cantidad * $precioUnitario) - $descuento;
+            $subtotalDetalle = max(0, $subtotalDetalle); // No permitir valores negativos
+            
+            $subtotal += $subtotalDetalle;
+            
+            // Guardar el detalle con el subtotal calculado
+            $detallesCalculados[] = [
+                'articulo_id' => $detalle['articulo_id'],
+                'cantidad' => $cantidad,
+                'precio_unitario' => $precioUnitario,
+                'descuento' => $descuento,
+                'subtotal' => $subtotalDetalle
+            ];
+        }
+
+        // El total es igual al subtotal (no hay descuento global en cotizaciones)
+        $total = $subtotal;
+
+        return [
+            'subtotal' => round($subtotal, 2),
+            'total' => round($total, 2),
+            'detalles_calculados' => $detallesCalculados
+        ];
+    }
+
     public function index(Request $request)
     {
         try {
@@ -55,7 +97,6 @@ class CotizacionController extends Controller
             'user_id' => 'required|exists:users,id',
             'almacen_id' => 'required|exists:almacenes,id',
             'fecha_hora' => 'required|date',
-            'total' => 'required|numeric',
             'validez' => 'nullable|string|max:100',
             'plazo_entrega' => 'nullable|string|max:100',
             'tiempo_entrega' => 'nullable|string|max:100',
@@ -63,17 +104,18 @@ class CotizacionController extends Controller
             'forma_pago' => 'nullable|string|max:100',
             'nota' => 'nullable|string',
             'estado' => 'nullable|string|max:50',
-            'detalles' => 'nullable|array',
+            'detalles' => 'required|array|min:1',
             'detalles.*.articulo_id' => 'required|exists:articulos,id',
             'detalles.*.cantidad' => 'required|integer|min:1',
-            'detalles.*.precio_unitario' => 'required|numeric',
-            'detalles.*.precio' => 'nullable|numeric',
-            'detalles.*.descuento' => 'nullable|numeric',
-            'detalles.*.subtotal' => 'nullable|numeric',
+            'detalles.*.precio_unitario' => 'required|numeric|min:0',
+            'detalles.*.descuento' => 'nullable|numeric|min:0',
         ]);
 
         DB::beginTransaction();
         try {
+            // Calcular totales en el backend
+            $resultadoCalculo = $this->calcularTotales($request->detalles);
+            
             // Si no hay cliente_id pero hay cliente_nombre, crear el cliente
             $clienteId = $request->cliente_id;
             if (!$clienteId && $request->cliente_nombre) {
@@ -99,13 +141,13 @@ class CotizacionController extends Controller
                 return response()->json(['error' => 'No se pudo determinar el cliente'], 400);
             }
 
-            $cotizacionData = $request->except(['detalles', 'cliente_nombre']);
+            $cotizacionData = $request->except(['detalles', 'cliente_nombre', 'total']);
             $cotizacionData['cliente_id'] = $clienteId;
             
             // Asegurar que los campos numéricos sean números
             $cotizacionData['user_id'] = (int)$cotizacionData['user_id'];
             $cotizacionData['almacen_id'] = (int)$cotizacionData['almacen_id'];
-            $cotizacionData['total'] = (float)$cotizacionData['total'];
+            $cotizacionData['total'] = $resultadoCalculo['total']; // Usar el total calculado
             
             // Convertir estado a integer si viene como string
             if (isset($cotizacionData['estado'])) {
@@ -153,16 +195,15 @@ class CotizacionController extends Controller
             
             $cotizacion = Cotizacion::create($cotizacionData);
 
-            if ($request->has('detalles')) {
-                foreach ($request->detalles as $detalle) {
-                    DetalleCotizacion::create([
-                        'cotizacion_id' => $cotizacion->id,
-                        'articulo_id' => $detalle['articulo_id'],
-                        'cantidad' => (int)$detalle['cantidad'],
-                        'precio' => (float)($detalle['precio_unitario'] ?? $detalle['precio'] ?? 0),
-                        'descuento' => (float)($detalle['descuento'] ?? 0),
-                    ]);
-                }
+            // Usar los detalles calculados
+            foreach ($resultadoCalculo['detalles_calculados'] as $detalle) {
+                DetalleCotizacion::create([
+                    'cotizacion_id' => $cotizacion->id,
+                    'articulo_id' => $detalle['articulo_id'],
+                    'cantidad' => (int)$detalle['cantidad'],
+                    'precio' => (float)$detalle['precio_unitario'],
+                    'descuento' => (float)$detalle['descuento'],
+                ]);
             }
 
             DB::commit();
@@ -214,7 +255,6 @@ class CotizacionController extends Controller
             'user_id' => 'required|exists:users,id',
             'almacen_id' => 'required|exists:almacenes,id',
             'fecha_hora' => 'required|date',
-            'total' => 'required|numeric',
             'validez' => 'nullable|string|max:100',
             'plazo_entrega' => 'nullable|string|max:100',
             'tiempo_entrega' => 'nullable|string|max:100',
@@ -225,12 +265,18 @@ class CotizacionController extends Controller
             'detalles' => 'nullable|array',
             'detalles.*.articulo_id' => 'required|exists:articulos,id',
             'detalles.*.cantidad' => 'required|integer|min:1',
-            'detalles.*.precio_unitario' => 'required|numeric',
-            'detalles.*.descuento' => 'nullable|numeric',
+            'detalles.*.precio_unitario' => 'required|numeric|min:0',
+            'detalles.*.descuento' => 'nullable|numeric|min:0',
         ]);
 
         DB::beginTransaction();
         try {
+            // Calcular totales en el backend si hay detalles
+            $resultadoCalculo = null;
+            if ($request->has('detalles') && is_array($request->detalles) && count($request->detalles) > 0) {
+                $resultadoCalculo = $this->calcularTotales($request->detalles);
+            }
+            
             // Si no hay cliente_id pero hay cliente_nombre, crear el cliente
             $clienteId = $request->cliente_id;
             if (!$clienteId && $request->cliente_nombre) {
@@ -256,12 +302,13 @@ class CotizacionController extends Controller
                 return response()->json(['error' => 'No se pudo determinar el cliente'], 400);
             }
 
-            $cotizacionData = $request->except(['detalles', 'cliente_nombre']);
+            $cotizacionData = $request->except(['detalles', 'cliente_nombre', 'total']);
             $cotizacionData['cliente_id'] = $clienteId;
             
             $cotizacionData['user_id'] = (int)$cotizacionData['user_id'];
             $cotizacionData['almacen_id'] = (int)$cotizacionData['almacen_id'];
-            $cotizacionData['total'] = (float)$cotizacionData['total'];
+            // Usar el total calculado si hay detalles, sino mantener el existente
+            $cotizacionData['total'] = $resultadoCalculo ? $resultadoCalculo['total'] : (float)($request->total ?? 0);
             
             if (isset($cotizacionData['estado'])) {
                 if (is_string($cotizacionData['estado'])) {
@@ -321,15 +368,15 @@ class CotizacionController extends Controller
             // Eliminar detalles existentes
             DetalleCotizacion::where('cotizacion_id', $cotizacionId)->delete();
 
-            // Crear nuevos detalles
-            if ($request->has('detalles') && is_array($request->detalles) && count($request->detalles) > 0) {
+            // Crear nuevos detalles usando los valores calculados
+            if ($resultadoCalculo && !empty($resultadoCalculo['detalles_calculados'])) {
                 \Log::info('Procesando detalles', [
-                    'count' => count($request->detalles), 
-                    'detalles' => $request->detalles,
+                    'count' => count($resultadoCalculo['detalles_calculados']), 
+                    'detalles' => $resultadoCalculo['detalles_calculados'],
                     'cotizacion_id' => $cotizacionId
                 ]);
                 
-                foreach ($request->detalles as $index => $detalle) {
+                foreach ($resultadoCalculo['detalles_calculados'] as $index => $detalle) {
                     \Log::info('Procesando detalle', ['index' => $index, 'detalle' => $detalle, 'cotizacion_id' => $cotizacionId]);
                     
                     if (!isset($detalle['articulo_id']) || !isset($detalle['cantidad'])) {
@@ -363,7 +410,7 @@ class CotizacionController extends Controller
                         ], 400);
                     }
                     
-                    $precio = (float)($detalle['precio_unitario'] ?? $detalle['precio'] ?? 0);
+                    $precio = (float)$detalle['precio_unitario'];
                     if ($precio <= 0) {
                         \Log::warning('Precio inválido en detalle', ['detalle' => $detalle, 'precio' => $precio]);
                         continue;
@@ -374,7 +421,7 @@ class CotizacionController extends Controller
                         'articulo_id' => $articuloId,
                         'cantidad' => (int)$detalle['cantidad'],
                         'precio' => $precio,
-                        'descuento' => (float)($detalle['descuento'] ?? 0),
+                        'descuento' => (float)$detalle['descuento'],
                     ];
                     
                     \Log::info('Intentando crear detalle', ['detalle_data' => $detalleData]);
