@@ -9,7 +9,7 @@ return new class extends Migration {
     {
         Schema::create('detalle_ventas', function (Blueprint $table) {
             $table->increments('id');
-            $table->integer('venta_id')->unsigned();
+            $table->unsignedBigInteger('venta_id');
             $table->integer('articulo_id')->unsigned();
             $table->integer('cantidad');
             $table->decimal('precio', 11, 2);

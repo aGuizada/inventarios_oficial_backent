@@ -165,6 +165,8 @@ Route::apiResource('conteos-fisicos', ConteoFisicoController::class);
 // Inventarios
 Route::get('inventarios/por-item', [InventarioController::class, 'porItem']);
 Route::get('inventarios/por-lotes', [InventarioController::class, 'porLotes']);
+Route::get('inventarios/template/download', [InventarioController::class, 'downloadTemplate']);
+Route::post('inventarios/import', [InventarioController::class, 'importExcel']);
 Route::get('inventarios/export-excel', [InventarioController::class, 'exportExcel']);
 Route::get('inventarios/export-pdf', [InventarioController::class, 'exportPDF']);
 Route::apiResource('inventarios', InventarioController::class);

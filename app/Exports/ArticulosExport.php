@@ -14,18 +14,32 @@ class ArticulosExport implements FromCollection, WithHeadings, WithStyles, WithC
 {
     public function collection()
     {
-        return Articulo::with(['categoria', 'marca', 'medida', 'industria'])
+        return Articulo::with(['categoria', 'proveedor', 'marca', 'medida', 'industria'])
             ->get()
             ->map(function ($articulo) {
                 return [
                     'codigo' => $articulo->codigo,
                     'nombre' => $articulo->nombre,
-                    'categoria' => $articulo->categoria->nombre ?? 'N/A',
-                    'marca' => $articulo->marca->nombre_marca ?? 'N/A',
-                    'medida' => $articulo->medida->nombre_medida ?? 'N/A',
-                    'precio_venta' => $articulo->precio_venta_unid,
-                    'precio_costo' => $articulo->precio_costo_unid,
-                    'gravamen' => $articulo->gravamen ? 'Sí' : 'No',
+                    'categoria' => optional($articulo->categoria)->nombre ?? 'N/A',
+                    'proveedor' => optional($articulo->proveedor)->nombre ?? 'N/A',
+                    'marca' => optional($articulo->marca)->nombre
+                        ?? optional($articulo->marca)->getAttribute('nombre_marca')
+                        ?? 'N/A',
+                    'medida' => optional($articulo->medida)->nombre_medida ?? 'N/A',
+                    'industria' => optional($articulo->industria)->nombre ?? 'N/A',
+                    'unidad_envase' => $articulo->unidad_envase,
+                    'precio_costo_unid' => $articulo->precio_costo_unid,
+                    'precio_costo_paq' => $articulo->precio_costo_paq,
+                    'precio_venta' => $articulo->precio_venta,
+                    'precio_uno' => $articulo->precio_uno,
+                    'precio_dos' => $articulo->precio_dos,
+                    'precio_tres' => $articulo->precio_tres,
+                    'precio_cuatro' => $articulo->precio_cuatro,
+                    'stock' => $articulo->stock,
+                    'descripcion' => $articulo->descripcion,
+                    'costo_compra' => $articulo->costo_compra,
+                    'vencimiento' => $articulo->vencimiento,
+        
                     'estado' => $articulo->estado ? 'Activo' : 'Inactivo',
                 ];
             });
@@ -37,11 +51,23 @@ class ArticulosExport implements FromCollection, WithHeadings, WithStyles, WithC
             'Código',
             'Nombre',
             'Categoría',
+            'Proveedor',
             'Marca',
             'Medida',
+            'Industria',
+            'Unidad Envase',
+            'Precio Costo Unid',
+            'Precio Costo Paq',
             'Precio Venta',
-            'Precio Costo',
-            'Gravamen',
+            'Precio Uno',
+            'Precio Dos',
+            'Precio Tres',
+            'Precio Cuatro',
+            'Stock',
+            'Descripcion',
+            'Costo Compra',
+            'Vencimiento',
+
             'Estado',
         ];
     }
@@ -65,12 +91,24 @@ class ArticulosExport implements FromCollection, WithHeadings, WithStyles, WithC
             'A' => 15,
             'B' => 35,
             'C' => 20,
-            'D' => 20,
-            'E' => 15,
+            'D' => 25,
+            'E' => 20,
             'F' => 15,
-            'G' => 15,
-            'H' => 12,
-            'I' => 12,
+            'G' => 20,
+            'H' => 15,
+            'I' => 18,
+            'J' => 18,
+            'K' => 18,
+            'L' => 15,
+            'M' => 15,
+            'N' => 15,
+            'O' => 15,
+            'P' => 12,
+            'Q' => 35,
+            'R' => 18,
+            'S' => 15,
+            'T' => 12,
+            'U' => 12,
         ];
     }
 

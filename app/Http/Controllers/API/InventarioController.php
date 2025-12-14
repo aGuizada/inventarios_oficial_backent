@@ -7,6 +7,8 @@ use App\Http\Traits\HasPagination;
 use App\Models\Inventario;
 use Illuminate\Http\Request;
 use App\Exports\InventariosExport;
+use App\Exports\InventarioTemplateExport;
+use App\Imports\InventarioImport;
 use Barryvdh\DomPDF\Facade\Pdf;
 use Maatwebsite\Excel\Facades\Excel;
 
@@ -151,15 +153,64 @@ class InventarioController extends Controller
         return $this->paginateResponse($query, $request, 15, 100);
     }
     /**
-     * Exporta inventario a Excel
+     * Descarga plantilla de importación de inventario
      */
-    public function exportExcel()
+    public function downloadTemplate()
     {
-        return Excel::download(new InventariosExport, 'inventario.xlsx');
+        return \Maatwebsite\Excel\Facades\Excel::download(new InventarioTemplateExport, 'plantilla_inventario.xlsx');
     }
 
     /**
-     * Exporta inventario a PDF
+     * Importa inventario desde un archivo Excel
+     */
+    public function importExcel(Request $request)
+    {
+        $request->validate([
+            'file' => 'required|file|mimes:xlsx,xls'
+        ]);
+
+        $import = new InventarioImport();
+        try {
+            Excel::import($import, $request->file('file'));
+        } catch (\Maatwebsite\Excel\Validators\ValidationException $e) {
+            $failures = $e->failures();
+            $errors = [];
+            foreach ($failures as $failure) {
+                $errors[] = [
+                    'fila' => $failure->row(),
+                    'atributo' => $failure->attribute(),
+                    'errores' => $failure->errors(),
+                    'valores' => $failure->values(),
+                ];
+            }
+            return response()->json([
+                'message' => 'Error de validación en el archivo',
+                'errores' => $errors
+            ], 422);
+        }
+
+        // Si usa SkipsFailures, los errores no lanzan excepción, se recogen aquí
+        $failures = $import->failures();
+        $errors = [];
+        foreach ($failures as $failure) {
+            $errors[] = [
+                'fila' => $failure->row(),
+                'atributo' => $failure->attribute(),
+                'errores' => $failure->errors(),
+                'valores' => $failure->values(),
+            ];
+        }
+
+        return response()->json([
+            'message' => count($errors) > 0 ? 'Importación completada con algunos errores' : 'Importación completada exitosamente',
+            'importadas_exitosamente' => $import->getImportedCount(),
+            'filas_con_errores' => $import->getSkippedCount(),
+            'errores' => $errors
+        ]);
+    }
+
+    /**
+     * Exporta inventario a Excel
      */
     public function exportPDF()
     {

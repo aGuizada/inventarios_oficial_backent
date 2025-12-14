@@ -9,7 +9,7 @@ return new class extends Migration {
     {
         Schema::create('credito_ventas', function (Blueprint $table) {
             $table->increments('id');
-            $table->integer('venta_id')->unsigned();
+            $table->unsignedBigInteger('venta_id');
             $table->integer('cliente_id')->unsigned();
             $table->integer('numero_cuotas')->default(0);
             $table->integer('tiempo_dias_cuota')->default(0);
