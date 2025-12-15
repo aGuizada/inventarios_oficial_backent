@@ -17,7 +17,7 @@
 
         .header h1 {
             margin: 0;
-            color: #1e3a8a;
+            color: #142c70ff;
         }
 
         .header p {
