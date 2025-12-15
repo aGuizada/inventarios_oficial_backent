@@ -85,12 +85,17 @@ class VentaController extends Controller
                 'user.name'
             ];
 
-            // Filtro por estado (para ver anuladas)
+            // Restringir visibilidad para no administradores (Vendedores)
+            $user = $request->user();
+            // Asumiendo que el rol 1 es Administrador. Si no es admin, solo ve sus ventas.
+            if ($user && $user->rol_id !== 1) {
+                $query->where('user_id', $user->id);
+            }
+
             if ($request->has('estado')) {
                 $query->where('estado', $request->estado);
             }
 
-            // Filtro por devoluciones
             if ($request->has('has_devoluciones') && $request->has_devoluciones == 'true') {
                 $query->whereHas('devoluciones');
             }

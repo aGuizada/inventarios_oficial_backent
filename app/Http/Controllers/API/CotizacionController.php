@@ -30,13 +30,13 @@ class CotizacionController extends Controller
             $cantidad = (float) ($detalle['cantidad'] ?? 0);
             $precioUnitario = (float) ($detalle['precio_unitario'] ?? $detalle['precio'] ?? 0);
             $descuento = (float) ($detalle['descuento'] ?? 0);
-            
+
             // Calcular subtotal del detalle: (cantidad * precio_unitario) - descuento
             $subtotalDetalle = ($cantidad * $precioUnitario) - $descuento;
             $subtotalDetalle = max(0, $subtotalDetalle); // No permitir valores negativos
-            
+
             $subtotal += $subtotalDetalle;
-            
+
             // Guardar el detalle con el subtotal calculado
             $detallesCalculados[] = [
                 'articulo_id' => $detalle['articulo_id'],
@@ -69,6 +69,13 @@ class CotizacionController extends Controller
                 'user.name'
             ];
 
+            // Restringir visibilidad para no administradores (Vendedores)
+            $user = $request->user();
+            // Asumiendo que el rol 1 es Administrador. Si no es admin, solo ve sus cotizaciones.
+            if ($user && $user->rol_id !== 1) {
+                $query->where('user_id', $user->id);
+            }
+
             $query = $this->applySearch($query, $request, $searchableFields);
             $query = $this->applySorting($query, $request, ['id', 'fecha_hora', 'total', 'estado'], 'id', 'desc');
 
@@ -80,7 +87,7 @@ class CotizacionController extends Controller
                 'line' => $e->getLine(),
                 'trace' => $e->getTraceAsString()
             ]);
-            
+
             return response()->json([
                 'success' => false,
                 'message' => 'Error al cargar las cotizaciones',
@@ -115,7 +122,7 @@ class CotizacionController extends Controller
         try {
             // Calcular totales en el backend
             $resultadoCalculo = $this->calcularTotales($request->detalles);
-            
+
             // Si no hay cliente_id pero hay cliente_nombre, crear el cliente
             $clienteId = $request->cliente_id;
             if (!$clienteId && $request->cliente_nombre) {
@@ -143,27 +150,27 @@ class CotizacionController extends Controller
 
             $cotizacionData = $request->except(['detalles', 'cliente_nombre', 'total']);
             $cotizacionData['cliente_id'] = $clienteId;
-            
+
             // Asegurar que los campos numéricos sean números
-            $cotizacionData['user_id'] = (int)$cotizacionData['user_id'];
-            $cotizacionData['almacen_id'] = (int)$cotizacionData['almacen_id'];
+            $cotizacionData['user_id'] = (int) $cotizacionData['user_id'];
+            $cotizacionData['almacen_id'] = (int) $cotizacionData['almacen_id'];
             $cotizacionData['total'] = $resultadoCalculo['total']; // Usar el total calculado
-            
+
             // Convertir estado a integer si viene como string
             if (isset($cotizacionData['estado'])) {
                 if (is_string($cotizacionData['estado'])) {
-                    $cotizacionData['estado'] = $cotizacionData['estado'] === 'Pendiente' ? 1 : 
-                                                 ($cotizacionData['estado'] === 'Aprobada' ? 2 : 3);
+                    $cotizacionData['estado'] = $cotizacionData['estado'] === 'Pendiente' ? 1 :
+                        ($cotizacionData['estado'] === 'Aprobada' ? 2 : 3);
                 }
             } else {
                 $cotizacionData['estado'] = 1; // Pendiente por defecto
             }
-            
+
             // Asegurar que tiempo_entrega tenga un valor si es requerido (no nullable en BD)
             if (empty($cotizacionData['tiempo_entrega'])) {
                 $cotizacionData['tiempo_entrega'] = '';
             }
-            
+
             // Limpiar campo validez si viene vacío (es nullable dateTime)
             // IMPORTANTE: Si viene como string vacío, NO debe incluirse en el array
             if (isset($cotizacionData['validez'])) {
@@ -181,7 +188,7 @@ class CotizacionController extends Controller
                     }
                 }
             }
-            
+
             // Asegurar que fecha_hora tenga el formato correcto
             if (isset($cotizacionData['fecha_hora'])) {
                 try {
@@ -192,7 +199,7 @@ class CotizacionController extends Controller
                     $cotizacionData['fecha_hora'] = now()->format('Y-m-d H:i:s');
                 }
             }
-            
+
             $cotizacion = Cotizacion::create($cotizacionData);
 
             // Usar los detalles calculados
@@ -200,9 +207,9 @@ class CotizacionController extends Controller
                 DetalleCotizacion::create([
                     'cotizacion_id' => $cotizacion->id,
                     'articulo_id' => $detalle['articulo_id'],
-                    'cantidad' => (int)$detalle['cantidad'],
-                    'precio' => (float)$detalle['precio_unitario'],
-                    'descuento' => (float)$detalle['descuento'],
+                    'cantidad' => (int) $detalle['cantidad'],
+                    'precio' => (float) $detalle['precio_unitario'],
+                    'descuento' => (float) $detalle['descuento'],
                 ]);
             }
 
@@ -236,19 +243,19 @@ class CotizacionController extends Controller
     {
         // Buscar la cotización manualmente para tener mejor control
         $cotizacion = Cotizacion::find($id);
-        
+
         if (!$cotizacion) {
             return response()->json([
                 'error' => 'Cotización no encontrada',
                 'message' => "No se encontró una cotización con ID {$id}"
             ], 404);
         }
-        
+
         \Log::info('Actualizando cotización', [
             'cotizacion_id' => $cotizacion->id,
             'request_data' => $request->all()
         ]);
-        
+
         $request->validate([
             'cliente_id' => 'nullable|exists:clientes,id',
             'cliente_nombre' => 'required_without:cliente_id|string|max:255',
@@ -276,7 +283,7 @@ class CotizacionController extends Controller
             if ($request->has('detalles') && is_array($request->detalles) && count($request->detalles) > 0) {
                 $resultadoCalculo = $this->calcularTotales($request->detalles);
             }
-            
+
             // Si no hay cliente_id pero hay cliente_nombre, crear el cliente
             $clienteId = $request->cliente_id;
             if (!$clienteId && $request->cliente_nombre) {
@@ -304,25 +311,25 @@ class CotizacionController extends Controller
 
             $cotizacionData = $request->except(['detalles', 'cliente_nombre', 'total']);
             $cotizacionData['cliente_id'] = $clienteId;
-            
-            $cotizacionData['user_id'] = (int)$cotizacionData['user_id'];
-            $cotizacionData['almacen_id'] = (int)$cotizacionData['almacen_id'];
+
+            $cotizacionData['user_id'] = (int) $cotizacionData['user_id'];
+            $cotizacionData['almacen_id'] = (int) $cotizacionData['almacen_id'];
             // Usar el total calculado si hay detalles, sino mantener el existente
-            $cotizacionData['total'] = $resultadoCalculo ? $resultadoCalculo['total'] : (float)($request->total ?? 0);
-            
+            $cotizacionData['total'] = $resultadoCalculo ? $resultadoCalculo['total'] : (float) ($request->total ?? 0);
+
             if (isset($cotizacionData['estado'])) {
                 if (is_string($cotizacionData['estado'])) {
-                    $cotizacionData['estado'] = $cotizacionData['estado'] === 'Pendiente' ? 1 : 
-                                                 ($cotizacionData['estado'] === 'Aprobada' ? 2 : 3);
+                    $cotizacionData['estado'] = $cotizacionData['estado'] === 'Pendiente' ? 1 :
+                        ($cotizacionData['estado'] === 'Aprobada' ? 2 : 3);
                 }
             } else {
                 $cotizacionData['estado'] = 1; // Pendiente por defecto
             }
-            
+
             if (empty($cotizacionData['tiempo_entrega'])) {
                 $cotizacionData['tiempo_entrega'] = '';
             }
-            
+
             if (isset($cotizacionData['validez']) && (empty($cotizacionData['validez']) || $cotizacionData['validez'] === '')) {
                 unset($cotizacionData['validez']);
             } elseif (isset($cotizacionData['validez']) && !empty($cotizacionData['validez'])) {
@@ -333,7 +340,7 @@ class CotizacionController extends Controller
                     unset($cotizacionData['validez']);
                 }
             }
-            
+
             if (isset($cotizacionData['fecha_hora'])) {
                 try {
                     $fechaHora = \Carbon\Carbon::parse($cotizacionData['fecha_hora']);
@@ -342,17 +349,17 @@ class CotizacionController extends Controller
                     $cotizacionData['fecha_hora'] = now()->format('Y-m-d H:i:s');
                 }
             }
-            
+
             // El ID ya está garantizado porque lo buscamos manualmente
             $cotizacionId = $cotizacion->id;
-            
+
             \Log::info('Cotización encontrada', ['cotizacion_id' => $cotizacionId]);
-            
+
             $cotizacion->update($cotizacionData);
-            
+
             // Refrescar el modelo para asegurar que tiene los datos actualizados
             $cotizacion->refresh();
-            
+
             // Verificar nuevamente el ID después del update
             if (!$cotizacion->id) {
                 DB::rollBack();
@@ -361,7 +368,7 @@ class CotizacionController extends Controller
                     'message' => 'La cotización perdió su ID después de la actualización'
                 ], 500);
             }
-            
+
             // Usar el ID guardado
             $cotizacionId = $cotizacion->id;
 
@@ -371,35 +378,35 @@ class CotizacionController extends Controller
             // Crear nuevos detalles usando los valores calculados
             if ($resultadoCalculo && !empty($resultadoCalculo['detalles_calculados'])) {
                 \Log::info('Procesando detalles', [
-                    'count' => count($resultadoCalculo['detalles_calculados']), 
+                    'count' => count($resultadoCalculo['detalles_calculados']),
                     'detalles' => $resultadoCalculo['detalles_calculados'],
                     'cotizacion_id' => $cotizacionId
                 ]);
-                
+
                 foreach ($resultadoCalculo['detalles_calculados'] as $index => $detalle) {
                     \Log::info('Procesando detalle', ['index' => $index, 'detalle' => $detalle, 'cotizacion_id' => $cotizacionId]);
-                    
+
                     if (!isset($detalle['articulo_id']) || !isset($detalle['cantidad'])) {
                         \Log::warning('Detalle sin articulo_id o cantidad', ['detalle' => $detalle, 'index' => $index]);
                         continue; // Saltar detalles inválidos
                     }
-                    
-                    $articuloId = (int)$detalle['articulo_id'];
-                    
+
+                    $articuloId = (int) $detalle['articulo_id'];
+
                     // Verificar que el artículo existe
                     $articulo = Articulo::find($articuloId);
                     if (!$articulo) {
                         // Verificar si existe en la base de datos directamente
                         $articuloExists = DB::table('articulos')->where('id', $articuloId)->exists();
-                        
+
                         \Log::error('Artículo no encontrado', [
-                            'articulo_id' => $articuloId, 
+                            'articulo_id' => $articuloId,
                             'detalle' => $detalle,
                             'cotizacion_id' => $cotizacionId,
                             'exists_in_db' => $articuloExists,
                             'articulos_count' => DB::table('articulos')->count()
                         ]);
-                        
+
                         DB::rollBack();
                         return response()->json([
                             'error' => 'Error al actualizar la cotización',
@@ -409,23 +416,23 @@ class CotizacionController extends Controller
                             'suggestion' => 'Elimine este detalle y agregue un artículo válido desde el catálogo de productos'
                         ], 400);
                     }
-                    
-                    $precio = (float)$detalle['precio_unitario'];
+
+                    $precio = (float) $detalle['precio_unitario'];
                     if ($precio <= 0) {
                         \Log::warning('Precio inválido en detalle', ['detalle' => $detalle, 'precio' => $precio]);
                         continue;
                     }
-                    
+
                     $detalleData = [
                         'cotizacion_id' => $cotizacionId,
                         'articulo_id' => $articuloId,
-                        'cantidad' => (int)$detalle['cantidad'],
+                        'cantidad' => (int) $detalle['cantidad'],
                         'precio' => $precio,
-                        'descuento' => (float)$detalle['descuento'],
+                        'descuento' => (float) $detalle['descuento'],
                     ];
-                    
+
                     \Log::info('Intentando crear detalle', ['detalle_data' => $detalleData]);
-                    
+
                     try {
                         DetalleCotizacion::create($detalleData);
                         \Log::info('Detalle creado exitosamente', ['detalle_data' => $detalleData]);
