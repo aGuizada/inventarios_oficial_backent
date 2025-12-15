@@ -251,22 +251,28 @@ class CajaController extends Controller
         // Obtener transacciones de caja
         $transacciones = \App\Models\TransaccionCaja::where('caja_id', $cajaId)->get();
 
-        // Calcular ventas al contado
-        $ventasContado = $ventas->filter(function ($v) {
-            $tipoVenta = $v->tipoVenta->nombre_tipo_ventas ?? $v->tipoVenta->nombre ?? '';
-            return stripos($tipoVenta, 'contado') !== false || stripos($tipoVenta, 'efectivo') !== false;
-        })->sum('total');
-
-        // Calcular ventas a crédito
-        $ventasCredito = $ventas->filter(function ($v) {
-            $tipoVenta = $v->tipoVenta->nombre_tipo_ventas ?? $v->tipoVenta->nombre ?? '';
-            return stripos($tipoVenta, 'credito') !== false || stripos($tipoVenta, 'crédito') !== false;
-        })->sum('total');
-
-        // Calcular ventas con pago QR
+        // Primero identificar ventas con pago QR (sin importar el tipo de venta)
         $ventasQR = $ventas->filter(function ($v) {
             $tipoPago = $v->tipoPago->nombre_tipo_pago ?? $v->tipoPago->nombre ?? '';
             return stripos($tipoPago, 'qr') !== false || stripos($tipoPago, 'qrcode') !== false;
+        })->sum('total');
+
+        // Calcular ventas al contado (solo las que NO se pagaron con QR)
+        $ventasContado = $ventas->filter(function ($v) {
+            $tipoVenta = $v->tipoVenta->nombre_tipo_ventas ?? $v->tipoVenta->nombre ?? '';
+            $tipoPago = $v->tipoPago->nombre_tipo_pago ?? $v->tipoPago->nombre ?? '';
+            $esContado = stripos($tipoVenta, 'contado') !== false || stripos($tipoVenta, 'efectivo') !== false;
+            $noEsQR = stripos($tipoPago, 'qr') === false && stripos($tipoPago, 'qrcode') === false;
+            return $esContado && $noEsQR;
+        })->sum('total');
+
+        // Calcular ventas a crédito (solo las que NO se pagaron con QR)
+        $ventasCredito = $ventas->filter(function ($v) {
+            $tipoVenta = $v->tipoVenta->nombre_tipo_ventas ?? $v->tipoVenta->nombre ?? '';
+            $tipoPago = $v->tipoPago->nombre_tipo_pago ?? $v->tipoPago->nombre ?? '';
+            $esCredito = stripos($tipoVenta, 'credito') !== false || stripos($tipoVenta, 'crédito') !== false;
+            $noEsQR = stripos($tipoPago, 'qr') === false && stripos($tipoPago, 'qrcode') === false;
+            return $esCredito && $noEsQR;
         })->sum('total');
 
         // Calcular compras al contado
@@ -365,12 +371,13 @@ class CajaController extends Controller
             return [
                 'id' => $caja->id,
                 'saldo_caja' => round($saldoFinal, 2),
-                'ventas' => $calculado['total_ventas'],
+                'ventas' => $calculado['total_ventas'], // Suma de TODAS las ventas (contado + crédito + QR)
                 'compras' => $calculado['total_compras'],
                 'depositos' => $calculado['entradas'],
                 'salidas' => $calculado['salidas'],
                 'ventas_contado' => $calculado['ventas_contado'],
                 'ventas_credito' => $calculado['ventas_credito'],
+                'ventas_qr' => $calculado['ventas_qr'], // Agregar ventas QR
                 'compras_contado' => $calculado['compras_contado'],
                 'compras_credito' => $calculado['compras_credito']
             ];
