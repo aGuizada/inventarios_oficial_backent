@@ -96,6 +96,13 @@ class VentaController extends Controller
                 $query->where('estado', $request->estado);
             }
 
+            if ($request->has('sucursal_id')) {
+                $sucursalId = $request->sucursal_id;
+                $query->whereHas('caja', function ($q) use ($sucursalId) {
+                    $q->where('sucursal_id', $sucursalId);
+                });
+            }
+
             if ($request->has('has_devoluciones') && $request->has_devoluciones == 'true') {
                 $query->whereHas('devoluciones');
             }

@@ -76,6 +76,13 @@ class CotizacionController extends Controller
                 $query->where('user_id', $user->id);
             }
 
+            if ($request->has('sucursal_id')) {
+                $sucursalId = $request->sucursal_id;
+                $query->whereHas('almacen', function ($q) use ($sucursalId) {
+                    $q->where('sucursal_id', $sucursalId);
+                });
+            }
+
             $query = $this->applySearch($query, $request, $searchableFields);
             $query = $this->applySorting($query, $request, ['id', 'fecha_hora', 'total', 'estado'], 'id', 'desc');
 

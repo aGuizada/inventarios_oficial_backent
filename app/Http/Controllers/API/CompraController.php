@@ -36,6 +36,14 @@ class CompraController extends Controller
                 'user.name'
             ];
 
+            // Filtrar por sucursal si se proporciona
+            if ($request->has('sucursal_id') && !empty($request->sucursal_id)) {
+                $sucursalId = $request->sucursal_id;
+                $query->whereHas('almacen', function ($q) use ($sucursalId) {
+                    $q->where('sucursal_id', $sucursalId);
+                });
+            }
+
             $query = $this->applySearch($query, $request, $searchableFields);
             $query = $this->applySorting($query, $request, ['id', 'fecha_hora', 'total', 'num_comprobante'], 'id', 'desc');
 
@@ -72,13 +80,13 @@ class CompraController extends Controller
             $cantidad = (float) ($detalle['cantidad'] ?? 0);
             $precioUnitario = (float) ($detalle['precio_unitario'] ?? 0);
             $descuentoIndividual = (float) ($detalle['descuento'] ?? 0);
-            
+
             // Calcular subtotal del detalle: (cantidad * precio_unitario) - descuento_individual
             $subtotalDetalle = ($cantidad * $precioUnitario) - $descuentoIndividual;
             $subtotalDetalle = max(0, $subtotalDetalle); // No permitir valores negativos
-            
+
             $subtotal += $subtotalDetalle;
-            
+
             // Guardar el detalle con el subtotal calculado
             $detallesCalculados[] = [
                 'articulo_id' => $detalle['articulo_id'],
@@ -155,7 +163,7 @@ class CompraController extends Controller
             // Calcular totales en el backend
             $descuentoGlobal = (float) ($request->descuento_global ?? 0);
             $resultadoCalculo = $this->calcularTotales($request->detalles, $descuentoGlobal);
-            
+
             // Preparar datos de la compra
             $compraData = $request->except(['detalles', 'numero_cuotas', 'monto_pagado', 'proveedor_nombre', 'total']);
             $compraData['proveedor_id'] = $proveedorId;
@@ -671,10 +679,10 @@ class CompraController extends Controller
 
             // Calcular totales en el backend
             $descuentoGlobal = (float) ($request->descuento_global ?? 0);
-            $detallesParaCalcular = $request->has('detalles') && is_array($request->detalles) 
-                ? $request->detalles 
+            $detallesParaCalcular = $request->has('detalles') && is_array($request->detalles)
+                ? $request->detalles
                 : [];
-            
+
             $resultadoCalculo = $this->calcularTotales($detallesParaCalcular, $descuentoGlobal);
 
             // Preparar datos de la compra

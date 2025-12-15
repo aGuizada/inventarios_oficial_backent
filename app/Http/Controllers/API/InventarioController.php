@@ -27,8 +27,16 @@ class InventarioController extends Controller
             'ubicacion',
             'articulo.codigo',
             'articulo.nombre',
+            'articulo.nombre',
             'almacen.nombre_almacen'
         ];
+
+        if ($request->has('sucursal_id')) {
+            $sucursalId = $request->sucursal_id;
+            $query->whereHas('almacen', function ($q) use ($sucursalId) {
+                $q->where('sucursal_id', $sucursalId);
+            });
+        }
 
         $query = $this->applySearch($query, $request, $searchableFields);
         $query = $this->applySorting($query, $request, ['id', 'cantidad', 'saldo_stock', 'created_at'], 'id', 'desc');
@@ -146,6 +154,13 @@ class InventarioController extends Controller
             'articulo.nombre',
             'almacen.nombre_almacen'
         ];
+
+        if ($request->has('sucursal_id')) {
+            $sucursalId = $request->sucursal_id;
+            $query->whereHas('almacen', function ($q) use ($sucursalId) {
+                $q->where('sucursal_id', $sucursalId);
+            });
+        }
 
         $query = $this->applySearch($query, $request, $searchableFields);
         $query = $this->applySorting($query, $request, ['id', 'cantidad', 'saldo_stock', 'created_at'], 'created_at', 'desc');
