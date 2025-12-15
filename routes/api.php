@@ -154,6 +154,16 @@ Route::prefix('reportes')->group(function () {
     Route::get('productos-mas-vendidos', [ReporteController::class, 'productosMasVendidos']);
     Route::get('stock-bajo', [ReporteController::class, 'stockBajo']);
     Route::get('utilidad', [ReporteController::class, 'utilidad']);
+    
+    // Utilidades por Sucursal
+    Route::get('utilidades-sucursal', [ReporteController::class, 'utilidadesSucursal']);
+    Route::get('utilidades-sucursal/export-excel', [ReporteController::class, 'exportUtilidadesSucursalExcel']);
+    Route::get('utilidades-sucursal/export-pdf', [ReporteController::class, 'exportUtilidadesSucursalPDF']);
+    
+    // Cajas por Sucursal
+    Route::get('cajas-sucursal', [ReporteController::class, 'cajasSucursal']);
+    Route::get('cajas-sucursal/export-excel', [ReporteController::class, 'exportCajasSucursalExcel']);
+    Route::get('cajas-sucursal/export-pdf', [ReporteController::class, 'exportCajasSucursalPDF']);
 });
 
 // Devoluciones

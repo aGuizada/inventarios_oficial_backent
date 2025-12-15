@@ -10,8 +10,11 @@ class ConfiguracionTrabajoController extends Controller
 {
     public function index()
     {
-        $configuraciones = ConfiguracionTrabajo::with('moneda')->get();
-        return response()->json($configuraciones);
+        $configuraciones = ConfiguracionTrabajo::with(['monedaPrincipal', 'monedaVenta', 'monedaCompra', 'empresa'])->get();
+        return response()->json([
+            'success' => true,
+            'data' => $configuraciones
+        ]);
     }
 
     public function store(Request $request)
@@ -34,8 +37,11 @@ class ConfiguracionTrabajoController extends Controller
 
     public function show(ConfiguracionTrabajo $configuracionTrabajo)
     {
-        $configuracionTrabajo->load('moneda');
-        return response()->json($configuracionTrabajo);
+        $configuracionTrabajo->load(['monedaPrincipal', 'monedaVenta', 'monedaCompra', 'empresa']);
+        return response()->json([
+            'success' => true,
+            'data' => $configuracionTrabajo
+        ]);
     }
 
     public function update(Request $request, ConfiguracionTrabajo $configuracionTrabajo)
