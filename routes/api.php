@@ -228,13 +228,17 @@ Route::post('traspasos/{traspaso}/rechazar', [TraspasoController::class, 'rechaz
 
 // Ventas
 Route::get('ventas/productos-inventario', [VentaController::class, 'productosInventario']);
+Route::get('ventas/{id}/imprimir/{formato}', [VentaController::class, 'imprimirComprobante']);
 Route::apiResource('ventas', VentaController::class);
 // Dashboard
 Route::prefix('dashboard')->group(function () {
     Route::get('kpis', [DashboardController::class, 'getKpis']);
+    Route::get('kpis-filtrados', [DashboardController::class, 'getKpisFiltrados']);
+    Route::get('utilidad-articulos', [DashboardController::class, 'getUtilidadArticulos']);
     Route::get('ventas-recientes', [DashboardController::class, 'getVentasRecientes']);
     Route::get('productos-top', [DashboardController::class, 'getProductosTop']);
     Route::get('chart-ventas', [DashboardController::class, 'getVentasChart']);
+    Route::get('chart-ventas-filtrado', [DashboardController::class, 'getVentasChartFiltrado']);
     Route::get('chart-inventario', [DashboardController::class, 'getInventarioChart']);
     Route::get('chart-comparativa', [DashboardController::class, 'getComparativaChart']);
     Route::get('proveedores-top', [DashboardController::class, 'getProveedoresTop']);
@@ -245,6 +249,7 @@ Route::prefix('dashboard')->group(function () {
     Route::get('alertas', [DashboardController::class, 'getAlertas']);
     Route::get('resumen-cajas', [DashboardController::class, 'getResumenCajas']);
     Route::get('rotacion-inventario', [DashboardController::class, 'getRotacionInventario']);
+    Route::get('sucursales', [DashboardController::class, 'getSucursales']);
 });
 
 // });
