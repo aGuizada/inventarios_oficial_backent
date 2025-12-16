@@ -15,6 +15,11 @@ use App\Models\Kardex; // Added Kardex use statement
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
+use App\Notifications\LowStockNotification;
+use App\Notifications\OutOfStockNotification;
+use App\Notifications\CreditSaleNotification;
+use App\Helpers\NotificationHelper;
+use Illuminate\Support\Facades\Log;
 
 class VentaController extends Controller
 {
@@ -405,7 +410,14 @@ class VentaController extends Controller
             }
 
             DB::commit();
-            $venta->load('detalles');
+
+            // Reload venta with relationships for notifications
+            $venta->load(['detalles.articulo', 'tipoVenta', 'cliente']);
+
+            // Manually trigger stock check notifications (because Observer runs before detalles are created)
+            Log::info('Manually triggering stock check for venta_id: ' . $venta->id);
+            $this->checkStockAndNotify($venta, $almacenId);
+
             return response()->json($venta, 201);
         } catch (\Exception $e) {
             DB::rollBack();
@@ -522,5 +534,63 @@ class VentaController extends Controller
         }
 
         return $pdf->download("venta_{$venta->num_comprobante}.pdf");
+    }
+
+    /**
+     * Check stock levels after a sale and notify if low or out of stock
+     */
+    private function checkStockAndNotify(Venta $venta, $almacenId): void
+    {
+        if (!$venta->detalles || $venta->detalles->isEmpty()) {
+            Log::warning('No detalles found for venta_id: ' . $venta->id);
+            return;
+        }
+
+        Log::info('Checking stock for ' . $venta->detalles->count() . ' products');
+
+        // Check if it's a credit sale first
+        if ($venta->tipoVenta && strtolower($venta->tipoVenta->nombre_tipo_ventas) === 'crédito') {
+            $cliente = $venta->cliente;
+            if ($cliente) {
+                Log::info('Sending credit sale notification');
+                NotificationHelper::notifyAdmins(new CreditSaleNotification($venta, $cliente));
+            }
+        }
+
+        // Check each product's stock
+        foreach ($venta->detalles as $detalle) {
+            $articulo = $detalle->articulo;
+
+            if (!$articulo) {
+                Log::warning('Articulo not found for detalle_id: ' . $detalle->id);
+                continue;
+            }
+
+            // Get current inventory for this product
+            $inventario = Inventario::where('articulo_id', $articulo->id)
+                ->where('almacen_id', $almacenId)
+                ->first();
+
+            if (!$inventario) {
+                Log::warning('Inventario not found for articulo_id: ' . $articulo->id . ' in almacen_id: ' . $almacenId);
+                continue;
+            }
+
+            $currentStock = $inventario->stock_actual;
+            Log::info("Articulo '{$articulo->nombre}' - Stock actual: {$currentStock}, Stock mínimo: " . ($articulo->stock_minimo ?? 'N/A'));
+
+            // Check if out of stock
+            if ($currentStock <= 0) {
+                Log::info("Sending OUT OF STOCK notification for '{$articulo->nombre}'");
+                NotificationHelper::notifyAdmins(new OutOfStockNotification($articulo));
+                continue;
+            }
+
+            // Check if low stock
+            if ($articulo->stock_minimo && $currentStock <= $articulo->stock_minimo) {
+                Log::info("Sending LOW STOCK notification for '{$articulo->nombre}'");
+                NotificationHelper::notifyAdmins(new LowStockNotification($articulo, $currentStock));
+            }
+        }
     }
 }
