@@ -3,6 +3,10 @@
 namespace App\Providers;
 
 use Illuminate\Support\ServiceProvider;
+use App\Models\Venta;
+use App\Models\Traspaso;
+use App\Observers\VentaObserver;
+use App\Observers\TraspasoObserver;
 
 class AppServiceProvider extends ServiceProvider
 {
@@ -19,6 +23,8 @@ class AppServiceProvider extends ServiceProvider
      */
     public function boot(): void
     {
-        //
+        // Register observers
+        Venta::observe(VentaObserver::class);
+        Traspaso::observe(TraspasoObserver::class);
     }
 }

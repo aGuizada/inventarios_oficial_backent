@@ -3,55 +3,134 @@
 namespace App\Http\Controllers\API;
 
 use App\Http\Controllers\Controller;
-use App\Models\Notification;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Auth;
 
 class NotificationController extends Controller
 {
+    /**
+     * Get all notifications for the authenticated user.
+     */
     public function index()
     {
-        $notifications = Notification::all();
-        return response()->json($notifications);
-    }
+        $user = Auth::user();
 
-    public function store(Request $request)
-    {
-        $request->validate([
-            'type' => 'required|string|max:255',
-            'notifiable_type' => 'required|string|max:255',
-            'notifiable_id' => 'required|integer',
-            'data' => 'required|json',
-            'read_at' => 'nullable|date',
+        if (!$user) {
+            return response()->json(['success' => false, 'message' => 'Unauthenticated'], 401);
+        }
+
+        $notifications = $user->notifications()->latest()->paginate(20);
+
+        // Transform data to match frontend interface
+        $data = $notifications->map(function ($notification) {
+            return [
+                'id' => $notification->id,
+                'titulo' => $notification->data['title'] ?? 'Notificación',
+                'mensaje' => $notification->data['message'] ?? '',
+                'tipo' => $notification->data['type'] ?? 'info',
+                'leido' => !is_null($notification->read_at),
+                'created_at' => $notification->created_at,
+                'updated_at' => $notification->updated_at,
+            ];
+        });
+
+        return response()->json([
+            'success' => true,
+            'data' => $data,
+            'meta' => [
+                'current_page' => $notifications->currentPage(),
+                'last_page' => $notifications->lastPage(),
+                'total' => $notifications->total(),
+            ]
         ]);
-
-        $notification = Notification::create($request->all());
-
-        return response()->json($notification, 201);
     }
 
-    public function show(Notification $notification)
+    /**
+     * Get unread notifications for the authenticated user.
+     */
+    public function unread()
     {
-        return response()->json($notification);
-    }
+        $user = Auth::user();
 
-    public function update(Request $request, Notification $notification)
-    {
-        $request->validate([
-            'type' => 'required|string|max:255',
-            'notifiable_type' => 'required|string|max:255',
-            'notifiable_id' => 'required|integer',
-            'data' => 'required|json',
-            'read_at' => 'nullable|date',
+        if (!$user) {
+            return response()->json(['success' => false, 'message' => 'Unauthenticated'], 401);
+        }
+
+        $notifications = $user->unreadNotifications()->latest()->get();
+
+        $data = $notifications->map(function ($notification) {
+            return [
+                'id' => $notification->id,
+                'titulo' => $notification->data['title'] ?? 'Notificación',
+                'mensaje' => $notification->data['message'] ?? '',
+                'tipo' => $notification->data['type'] ?? 'info',
+                'leido' => false,
+                'created_at' => $notification->created_at,
+                'updated_at' => $notification->updated_at,
+            ];
+        });
+
+        return response()->json([
+            'success' => true,
+            'data' => $data
         ]);
-
-        $notification->update($request->all());
-
-        return response()->json($notification);
     }
 
-    public function destroy(Notification $notification)
+    /**
+     * Mark a specific notification as read.
+     */
+    public function markAsRead($id)
     {
-        $notification->delete();
-        return response()->json(null, 204);
+        $user = Auth::user();
+
+        if (!$user) {
+            return response()->json(['success' => false, 'message' => 'Unauthenticated'], 401);
+        }
+
+        $notification = $user->notifications()->where('id', $id)->first();
+
+        if ($notification) {
+            $notification->markAsRead();
+            return response()->json(['success' => true, 'message' => 'Notificación marcada como leída']);
+        }
+
+        return response()->json(['success' => false, 'message' => 'Notificación no encontrada'], 404);
+    }
+
+    /**
+     * Mark all notifications as read.
+     */
+    public function markAllAsRead()
+    {
+        $user = Auth::user();
+
+        if (!$user) {
+            return response()->json(['success' => false, 'message' => 'Unauthenticated'], 401);
+        }
+
+        $user->unreadNotifications->markAsRead();
+
+        return response()->json(['success' => true, 'message' => 'Todas las notificaciones marcadas como leídas']);
+    }
+
+    /**
+     * Delete a notification.
+     */
+    public function destroy($id)
+    {
+        $user = Auth::user();
+
+        if (!$user) {
+            return response()->json(['success' => false, 'message' => 'Unauthenticated'], 401);
+        }
+
+        $notification = $user->notifications()->where('id', $id)->first();
+
+        if ($notification) {
+            $notification->delete();
+            return response()->json(['success' => true, 'message' => 'Notificación eliminada']);
+        }
+
+        return response()->json(['success' => false, 'message' => 'Notificación no encontrada'], 404);
     }
 }

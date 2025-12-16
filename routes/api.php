@@ -56,203 +56,207 @@ Route::prefix('auth')->group(function () {
 });
 
 // Rutas protegidas (requieren autenticación)
-// Route::middleware('auth:sanctum')->group(function () {
-// Logout
-Route::post('/auth/logout', [AuthController::class, 'logout']);
+Route::middleware('auth:sanctum')->group(function () {
+    // Logout
+    Route::post('/auth/logout', [AuthController::class, 'logout']);
 
-// Usuarios
-Route::get('users/export-excel', [UserController::class, 'exportExcel']);
-Route::get('users/export-pdf', [UserController::class, 'exportPDF']);
-Route::apiResource('users', UserController::class);
+    // Usuarios
+    Route::get('users/export-excel', [UserController::class, 'exportExcel']);
+    Route::get('users/export-pdf', [UserController::class, 'exportPDF']);
+    Route::apiResource('users', UserController::class);
 
-// Almacenes
-Route::apiResource('almacenes', AlmacenController::class);
+    // Almacenes
+    Route::apiResource('almacenes', AlmacenController::class);
 
-// Arqueos de Caja
-Route::apiResource('arqueos-caja', ArqueoCajaController::class);
+    // Arqueos de Caja
+    Route::apiResource('arqueos-caja', ArqueoCajaController::class);
 
-// Artículos
-Route::get('articulos/template/download', [ArticuloController::class, 'downloadTemplate']);
-Route::post('articulos/import', [ArticuloController::class, 'import']);
-Route::get('articulos/export-excel', [ArticuloController::class, 'exportExcel']);
-Route::get('articulos/export-pdf', [ArticuloController::class, 'exportPDF']);
-Route::apiResource('articulos', ArticuloController::class);
+    // Artículos
+    Route::get('articulos/template/download', [ArticuloController::class, 'downloadTemplate']);
+    Route::post('articulos/import', [ArticuloController::class, 'import']);
+    Route::get('articulos/export-excel', [ArticuloController::class, 'exportExcel']);
+    Route::get('articulos/export-pdf', [ArticuloController::class, 'exportPDF']);
+    Route::apiResource('articulos', ArticuloController::class);
 
-// Cajas
-Route::get('cajas/{id}/details', [CajaController::class, 'getCajaDetails']);
-Route::get('cajas/calcular-totales', [CajaController::class, 'calcularTotalesCajas']);
-Route::apiResource('cajas', CajaController::class);
+    // Cajas
+    Route::get('cajas/{id}/details', [CajaController::class, 'getCajaDetails']);
+    Route::get('cajas/calcular-totales', [CajaController::class, 'calcularTotalesCajas']);
+    Route::apiResource('cajas', CajaController::class);
 
-// Categorías
-Route::apiResource('categorias', CategoriaController::class);
+    // Categorías
+    Route::apiResource('categorias', CategoriaController::class);
 
-// Clientes
-Route::get('clientes/export-excel', [ClienteController::class, 'exportExcel']);
-Route::get('clientes/export-pdf', [ClienteController::class, 'exportPDF']);
-Route::apiResource('clientes', ClienteController::class);
-
-// Compras
-Route::apiResource('compras', CompraController::class);
-
-// Cuotas de Compra
-Route::apiResource('compra-cuotas', CompraCuotaController::class);
-Route::get('compra-cuotas/compra-credito/{compraCreditoId}/details', [CompraCuotaController::class, 'getByCompraCreditoWithDetails']);
-Route::post('compra-cuotas/{id}/pagar', [CompraCuotaController::class, 'pagarCuota']);
-Route::get('compra-cuotas/compra-credito/{compraCreditoId}', [CompraCuotaController::class, 'getByCompraCredito']);
-
-// Configuración de Trabajo
-Route::apiResource('configuracion-trabajo', ConfiguracionTrabajoController::class);
-
-// Cotizaciones
-Route::apiResource('cotizaciones', CotizacionController::class);
-
-// Créditos de Venta
-Route::get('creditos-venta/{id}/details', [CreditoVentaController::class, 'getDetails']);
-Route::apiResource('creditos-venta', CreditoVentaController::class);
-
-// Cuotas de Crédito
-Route::get('cuotas-credito/credito/{creditoId}', [CuotaCreditoController::class, 'getByCredito']);
-Route::post('cuotas-credito/{id}/pagar', [CuotaCreditoController::class, 'pagarCuota']);
-Route::apiResource('cuotas-credito', CuotaCreditoController::class);
-
-// Empresas
-Route::apiResource('empresas', EmpresaController::class);
-
-// Industrias
-Route::apiResource('industrias', IndustriaController::class);
-
-// Kardex
-Route::get('kardex/export-excel', [KardexController::class, 'exportExcel']);
-Route::get('kardex/export-pdf', [KardexController::class, 'exportPDF']);
-Route::get('kardex/resumen', [KardexController::class, 'getResumen']);
-Route::get('kardex/valorado', [KardexController::class, 'getKardexValorado']);
-Route::get('kardex/reporte/{articulo_id}', [KardexController::class, 'getReportePorArticulo']);
-Route::post('kardex/recalcular', [KardexController::class, 'recalcular']);
-Route::get('kardex/totales', [KardexController::class, 'getTotales']);
-Route::get('kardex/por-articulo/{articulo_id}', [KardexController::class, 'porArticulo']);
-Route::apiResource('kardex', KardexController::class);
-
-// Reportes
-Route::prefix('reportes')->group(function () {
-    // Ventas
-    Route::get('ventas', [ReporteController::class, 'ventas']);
-    Route::get('ventas/export-excel', [ReporteController::class, 'exportVentasExcel']);
-    Route::get('ventas/export-pdf', [ReporteController::class, 'exportVentasPDF']);
+    // Clientes
+    Route::get('clientes/export-excel', [ClienteController::class, 'exportExcel']);
+    Route::get('clientes/export-pdf', [ClienteController::class, 'exportPDF']);
+    Route::apiResource('clientes', ClienteController::class);
 
     // Compras
-    Route::get('compras', [ReporteController::class, 'compras']);
-    Route::get('compras/export-excel', [ReporteController::class, 'exportComprasExcel']);
+    Route::apiResource('compras', CompraController::class);
 
-    // Inventario
-    Route::get('inventario', [ReporteController::class, 'inventario']);
-    Route::get('inventario/export-excel', [ReporteController::class, 'exportInventarioExcel']);
+    // Cuotas de Compra
+    Route::apiResource('compra-cuotas', CompraCuotaController::class);
+    Route::get('compra-cuotas/compra-credito/{compraCreditoId}/details', [CompraCuotaController::class, 'getByCompraCreditoWithDetails']);
+    Route::post('compra-cuotas/{id}/pagar', [CompraCuotaController::class, 'pagarCuota']);
+    Route::get('compra-cuotas/compra-credito/{compraCreditoId}', [CompraCuotaController::class, 'getByCompraCredito']);
 
-    // Créditos
-    Route::get('creditos', [ReporteController::class, 'creditos']);
+    // Configuración de Trabajo
+    Route::apiResource('configuracion-trabajo', ConfiguracionTrabajoController::class);
 
-    // Otros
-    Route::get('productos-mas-vendidos', [ReporteController::class, 'productosMasVendidos']);
-    Route::get('stock-bajo', [ReporteController::class, 'stockBajo']);
-    Route::get('utilidad', [ReporteController::class, 'utilidad']);
-    
-    // Utilidades por Sucursal
-    Route::get('utilidades-sucursal', [ReporteController::class, 'utilidadesSucursal']);
-    Route::get('utilidades-sucursal/export-excel', [ReporteController::class, 'exportUtilidadesSucursalExcel']);
-    Route::get('utilidades-sucursal/export-pdf', [ReporteController::class, 'exportUtilidadesSucursalPDF']);
-    
-    // Cajas por Sucursal
-    Route::get('cajas-sucursal', [ReporteController::class, 'cajasSucursal']);
-    Route::get('cajas-sucursal/export-excel', [ReporteController::class, 'exportCajasSucursalExcel']);
-    Route::get('cajas-sucursal/export-pdf', [ReporteController::class, 'exportCajasSucursalPDF']);
-});
+    // Cotizaciones
+    Route::apiResource('cotizaciones', CotizacionController::class);
 
-// Devoluciones
-Route::apiResource('devoluciones', DevolucionController::class);
+    // Créditos de Venta
+    Route::get('creditos-venta/{id}/details', [CreditoVentaController::class, 'getDetails']);
+    Route::apiResource('creditos-venta', CreditoVentaController::class);
 
-// Conteos Físicos
-Route::post('conteos-fisicos/{id}/generar-ajustes', [ConteoFisicoController::class, 'generarAjustes']);
-Route::apiResource('conteos-fisicos', ConteoFisicoController::class);
+    // Cuotas de Crédito
+    Route::get('cuotas-credito/credito/{creditoId}', [CuotaCreditoController::class, 'getByCredito']);
+    Route::post('cuotas-credito/{id}/pagar', [CuotaCreditoController::class, 'pagarCuota']);
+    Route::apiResource('cuotas-credito', CuotaCreditoController::class);
 
-// Inventarios
-Route::get('inventarios/por-item', [InventarioController::class, 'porItem']);
-Route::get('inventarios/por-lotes', [InventarioController::class, 'porLotes']);
-Route::get('inventarios/template/download', [InventarioController::class, 'downloadTemplate']);
-Route::post('inventarios/import', [InventarioController::class, 'importExcel']);
-Route::get('inventarios/export-excel', [InventarioController::class, 'exportExcel']);
-Route::get('inventarios/export-pdf', [InventarioController::class, 'exportPDF']);
-Route::apiResource('inventarios', InventarioController::class);
+    // Empresas
+    Route::apiResource('empresas', EmpresaController::class);
 
-// Marcas
-Route::apiResource('marcas', MarcaController::class);
+    // Industrias
+    Route::apiResource('industrias', IndustriaController::class);
 
-// Medidas
-Route::apiResource('medidas', MedidaController::class);
+    // Kardex
+    Route::get('kardex/export-excel', [KardexController::class, 'exportExcel']);
+    Route::get('kardex/export-pdf', [KardexController::class, 'exportPDF']);
+    Route::get('kardex/resumen', [KardexController::class, 'getResumen']);
+    Route::get('kardex/valorado', [KardexController::class, 'getKardexValorado']);
+    Route::get('kardex/reporte/{articulo_id}', [KardexController::class, 'getReportePorArticulo']);
+    Route::post('kardex/recalcular', [KardexController::class, 'recalcular']);
+    Route::get('kardex/totales', [KardexController::class, 'getTotales']);
+    Route::get('kardex/por-articulo/{articulo_id}', [KardexController::class, 'porArticulo']);
+    Route::apiResource('kardex', KardexController::class);
 
-// Monedas
-Route::apiResource('monedas', MonedaController::class);
+    // Reportes
+    Route::prefix('reportes')->group(function () {
+        // Ventas
+        Route::get('ventas', [ReporteController::class, 'ventas']);
+        Route::get('ventas/export-excel', [ReporteController::class, 'exportVentasExcel']);
+        Route::get('ventas/export-pdf', [ReporteController::class, 'exportVentasPDF']);
 
+        // Compras
+        Route::get('compras', [ReporteController::class, 'compras']);
+        Route::get('compras/export-excel', [ReporteController::class, 'exportComprasExcel']);
+
+        // Inventario
+        Route::get('inventario', [ReporteController::class, 'inventario']);
+        Route::get('inventario/export-excel', [ReporteController::class, 'exportInventarioExcel']);
+
+        // Créditos
+        Route::get('creditos', [ReporteController::class, 'creditos']);
+
+        // Otros
+        Route::get('productos-mas-vendidos', [ReporteController::class, 'productosMasVendidos']);
+        Route::get('stock-bajo', [ReporteController::class, 'stockBajo']);
+        Route::get('utilidad', [ReporteController::class, 'utilidad']);
+
+        // Utilidades por Sucursal
+        Route::get('utilidades-sucursal', [ReporteController::class, 'utilidadesSucursal']);
+        Route::get('utilidades-sucursal/export-excel', [ReporteController::class, 'exportUtilidadesSucursalExcel']);
+        Route::get('utilidades-sucursal/export-pdf', [ReporteController::class, 'exportUtilidadesSucursalPDF']);
+
+        // Cajas por Sucursal
+        Route::get('cajas-sucursal', [ReporteController::class, 'cajasSucursal']);
+        Route::get('cajas-sucursal/export-excel', [ReporteController::class, 'exportCajasSucursalExcel']);
+        Route::get('cajas-sucursal/export-pdf', [ReporteController::class, 'exportCajasSucursalPDF']);
+    });
+
+    // Devoluciones
+    Route::apiResource('devoluciones', DevolucionController::class);
+
+    // Conteos Físicos
+    Route::post('conteos-fisicos/{id}/generar-ajustes', [ConteoFisicoController::class, 'generarAjustes']);
+    Route::apiResource('conteos-fisicos', ConteoFisicoController::class);
+
+    // Inventarios
+    Route::get('inventarios/por-item', [InventarioController::class, 'porItem']);
+    Route::get('inventarios/por-lotes', [InventarioController::class, 'porLotes']);
+    Route::get('inventarios/template/download', [InventarioController::class, 'downloadTemplate']);
+    Route::post('inventarios/import', [InventarioController::class, 'importExcel']);
+    Route::get('inventarios/export-excel', [InventarioController::class, 'exportExcel']);
+    Route::get('inventarios/export-pdf', [InventarioController::class, 'exportPDF']);
+    Route::apiResource('inventarios', InventarioController::class);
+
+    // Marcas
+    Route::apiResource('marcas', MarcaController::class);
+
+    // Medidas
+    Route::apiResource('medidas', MedidaController::class);
+
+    // Monedas
+    Route::apiResource('monedas', MonedaController::class);
+
+    // Notificaciones
 // Notificaciones
-Route::apiResource('notificaciones', NotificationController::class);
+    Route::get('notificaciones/no-leidas', [NotificationController::class, 'unread']);
+    Route::put('notificaciones/leer-todas', [NotificationController::class, 'markAllAsRead']);
+    Route::put('notificaciones/{id}/leer', [NotificationController::class, 'markAsRead']);
+    Route::apiResource('notificaciones', NotificationController::class);
 
-// Precios
-Route::apiResource('precios', PrecioController::class);
+    // Precios
+    Route::apiResource('precios', PrecioController::class);
 
-// Proveedores
-Route::get('proveedores/template/download', [ProveedorController::class, 'downloadTemplate']);
-Route::post('proveedores/import', [ProveedorController::class, 'import']);
-Route::get('proveedores/export-excel', [ProveedorController::class, 'exportExcel']);
-Route::get('proveedores/export-pdf', [ProveedorController::class, 'exportPDF']);
-Route::apiResource('proveedores', ProveedorController::class);
+    // Proveedores
+    Route::get('proveedores/template/download', [ProveedorController::class, 'downloadTemplate']);
+    Route::post('proveedores/import', [ProveedorController::class, 'import']);
+    Route::get('proveedores/export-excel', [ProveedorController::class, 'exportExcel']);
+    Route::get('proveedores/export-pdf', [ProveedorController::class, 'exportPDF']);
+    Route::apiResource('proveedores', ProveedorController::class);
 
-// Roles
-Route::apiResource('roles', RolController::class);
+    // Roles
+    Route::apiResource('roles', RolController::class);
 
-// Sucursales
-Route::apiResource('sucursales', SucursalController::class);
+    // Sucursales
+    Route::apiResource('sucursales', SucursalController::class);
 
-// Tipos de Pago
-Route::apiResource('tipos-pago', TipoPagoController::class);
+    // Tipos de Pago
+    Route::apiResource('tipos-pago', TipoPagoController::class);
 
-// Tipos de Venta
-Route::apiResource('tipos-venta', TipoVentaController::class);
+    // Tipos de Venta
+    Route::apiResource('tipos-venta', TipoVentaController::class);
 
-// Transacciones de Caja
-Route::get('transacciones-caja/caja/{cajaId}', [TransaccionCajaController::class, 'getByCaja']);
-Route::apiResource('transacciones-caja', TransaccionCajaController::class);
+    // Transacciones de Caja
+    Route::get('transacciones-caja/caja/{cajaId}', [TransaccionCajaController::class, 'getByCaja']);
+    Route::apiResource('transacciones-caja', TransaccionCajaController::class);
 
-// Traspasos
-Route::apiResource('traspasos', TraspasoController::class);
-Route::post('traspasos/{traspaso}/aprobar', [TraspasoController::class, 'aprobar']);
-Route::post('traspasos/{traspaso}/recibir', [TraspasoController::class, 'recibir']);
-Route::post('traspasos/{traspaso}/rechazar', [TraspasoController::class, 'rechazar']);
+    // Traspasos
+    Route::apiResource('traspasos', TraspasoController::class);
+    Route::post('traspasos/{traspaso}/aprobar', [TraspasoController::class, 'aprobar']);
+    Route::post('traspasos/{traspaso}/recibir', [TraspasoController::class, 'recibir']);
+    Route::post('traspasos/{traspaso}/rechazar', [TraspasoController::class, 'rechazar']);
 
-// Ventas
-Route::get('ventas/productos-inventario', [VentaController::class, 'productosInventario']);
-Route::get('ventas/{id}/imprimir/{formato}', [VentaController::class, 'imprimirComprobante']);
-Route::apiResource('ventas', VentaController::class);
-// Dashboard
-Route::prefix('dashboard')->group(function () {
-    Route::get('kpis', [DashboardController::class, 'getKpis']);
-    Route::get('kpis-filtrados', [DashboardController::class, 'getKpisFiltrados']);
-    Route::get('utilidad-articulos', [DashboardController::class, 'getUtilidadArticulos']);
-    Route::get('ventas-recientes', [DashboardController::class, 'getVentasRecientes']);
-    Route::get('productos-top', [DashboardController::class, 'getProductosTop']);
-    Route::get('chart-ventas', [DashboardController::class, 'getVentasChart']);
-    Route::get('chart-ventas-filtrado', [DashboardController::class, 'getVentasChartFiltrado']);
-    Route::get('chart-inventario', [DashboardController::class, 'getInventarioChart']);
-    Route::get('chart-comparativa', [DashboardController::class, 'getComparativaChart']);
-    Route::get('proveedores-top', [DashboardController::class, 'getProveedoresTop']);
-    Route::get('clientes-frecuentes', [DashboardController::class, 'getClientesFrecuentes']);
-    Route::get('productos-bajo-stock', [DashboardController::class, 'getProductosBajoStock']);
-    Route::get('productos-mas-comprados', [DashboardController::class, 'getProductosMasComprados']);
-    Route::get('top-stock', [DashboardController::class, 'getTopStock']);
-    Route::get('alertas', [DashboardController::class, 'getAlertas']);
-    Route::get('resumen-cajas', [DashboardController::class, 'getResumenCajas']);
-    Route::get('rotacion-inventario', [DashboardController::class, 'getRotacionInventario']);
-    Route::get('sucursales', [DashboardController::class, 'getSucursales']);
+    // Ventas
+    Route::get('ventas/productos-inventario', [VentaController::class, 'productosInventario']);
+    Route::get('ventas/{id}/imprimir/{formato}', [VentaController::class, 'imprimirComprobante']);
+    Route::apiResource('ventas', VentaController::class);
+    // Dashboard
+    Route::prefix('dashboard')->group(function () {
+        Route::get('kpis', [DashboardController::class, 'getKpis']);
+        Route::get('kpis-filtrados', [DashboardController::class, 'getKpisFiltrados']);
+        Route::get('utilidad-articulos', [DashboardController::class, 'getUtilidadArticulos']);
+        Route::get('ventas-recientes', [DashboardController::class, 'getVentasRecientes']);
+        Route::get('productos-top', [DashboardController::class, 'getProductosTop']);
+        Route::get('chart-ventas', [DashboardController::class, 'getVentasChart']);
+        Route::get('chart-ventas-filtrado', [DashboardController::class, 'getVentasChartFiltrado']);
+        Route::get('chart-inventario', [DashboardController::class, 'getInventarioChart']);
+        Route::get('chart-comparativa', [DashboardController::class, 'getComparativaChart']);
+        Route::get('proveedores-top', [DashboardController::class, 'getProveedoresTop']);
+        Route::get('clientes-frecuentes', [DashboardController::class, 'getClientesFrecuentes']);
+        Route::get('productos-bajo-stock', [DashboardController::class, 'getProductosBajoStock']);
+        Route::get('productos-mas-comprados', [DashboardController::class, 'getProductosMasComprados']);
+        Route::get('top-stock', [DashboardController::class, 'getTopStock']);
+        Route::get('alertas', [DashboardController::class, 'getAlertas']);
+        Route::get('resumen-cajas', [DashboardController::class, 'getResumenCajas']);
+        Route::get('rotacion-inventario', [DashboardController::class, 'getRotacionInventario']);
+        Route::get('sucursales', [DashboardController::class, 'getSucursales']);
+    });
+
 });
-
-// });
 
 // Ruta de salud/health check (pública)
 Route::get('/health', function () {
