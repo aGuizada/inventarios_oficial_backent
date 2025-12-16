@@ -43,13 +43,27 @@ class SucursalController extends Controller
             'correo' => 'nullable|email|max:255',
             'telefono' => 'nullable|string|max:20',
             'departamento' => 'nullable|string|max:100',
-            'estado' => 'boolean',
+            'estado' => 'nullable|boolean',
             'responsable' => 'nullable|string|max:255',
         ]);
 
-        $sucursal = Sucursal::create($request->all());
+        // Convertir estado a booleano si viene como string
+        $data = $request->all();
+        if (isset($data['estado'])) {
+            if (is_string($data['estado'])) {
+                $data['estado'] = filter_var($data['estado'], FILTER_VALIDATE_BOOLEAN);
+            } elseif (is_numeric($data['estado'])) {
+                $data['estado'] = (bool) $data['estado'];
+            }
+        }
 
-        return response()->json($sucursal, 201);
+        $sucursal = Sucursal::create($data);
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Sucursal creada exitosamente',
+            'data' => Sucursal::with('empresa')->find($sucursal->id)
+        ], 201);
     }
 
     public function show($id)
@@ -79,13 +93,27 @@ class SucursalController extends Controller
             'correo' => 'nullable|email|max:255',
             'telefono' => 'nullable|string|max:20',
             'departamento' => 'nullable|string|max:100',
-            'estado' => 'boolean',
+            'estado' => 'nullable|boolean',
             'responsable' => 'nullable|string|max:255',
         ]);
 
-        $sucursal->update($request->all());
+        // Convertir estado a booleano si viene como string
+        $data = $request->all();
+        if (isset($data['estado'])) {
+            if (is_string($data['estado'])) {
+                $data['estado'] = filter_var($data['estado'], FILTER_VALIDATE_BOOLEAN);
+            } elseif (is_numeric($data['estado'])) {
+                $data['estado'] = (bool) $data['estado'];
+            }
+        }
 
-        return response()->json(Sucursal::with('empresa')->find($id));
+        $sucursal->update($data);
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Sucursal actualizada exitosamente',
+            'data' => Sucursal::with('empresa')->find($id)
+        ]);
     }
 
     public function destroy($id)
@@ -97,6 +125,10 @@ class SucursalController extends Controller
         }
 
         $sucursal->delete();
-        return response()->json(null, 204);
+        
+        return response()->json([
+            'success' => true,
+            'message' => 'Sucursal eliminada exitosamente'
+        ], 200);
     }
 }
