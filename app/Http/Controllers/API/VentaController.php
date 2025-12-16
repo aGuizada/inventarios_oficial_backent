@@ -14,6 +14,7 @@ use App\Models\TipoPago;
 use App\Models\Kardex; // Added Kardex use statement
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Validation\ValidationException;
 use App\Notifications\LowStockNotification;
 use App\Notifications\OutOfStockNotification;
@@ -417,6 +418,12 @@ class VentaController extends Controller
             // Manually trigger stock check notifications (because Observer runs before detalles are created)
             Log::info('Manually triggering stock check for venta_id: ' . $venta->id);
             $this->checkStockAndNotify($venta, $almacenId);
+
+            // Invalidar caché del dashboard para reflejar la nueva venta
+            Cache::forget('dashboard.kpis');
+            Cache::forget('dashboard.ventas_recientes');
+            Cache::forget('dashboard.productos_top');
+            Cache::forget('dashboard.ventas_chart');
 
             return response()->json($venta, 201);
         } catch (\Exception $e) {

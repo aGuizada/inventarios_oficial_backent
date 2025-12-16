@@ -12,6 +12,7 @@ use App\Models\DetalleVenta;
 use App\Models\DetalleCompra;
 use App\Models\Articulo;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Cache;
 use Carbon\Carbon;
 use App\Http\Requests\DashboardFilterRequest;
 use App\Http\Resources\ArticuloUtilidadResource;
@@ -26,153 +27,168 @@ class DashboardController extends Controller
      */
     public function getKpis()
     {
-        $hoy = Carbon::today();
-        $mesActual = Carbon::now()->startOfMonth();
-        $mesAnterior = Carbon::now()->subMonth()->startOfMonth();
+        // Cachear KPIs por 3 minutos para evitar 12+ queries en cada request
+        return Cache::remember('dashboard.kpis', 180, function () {
+            $hoy = Carbon::today();
+            $mesActual = Carbon::now()->startOfMonth();
+            $mesAnterior = Carbon::now()->subMonth()->startOfMonth();
 
-        // === VENTAS ===
-        $ventasHoy = Venta::whereDate('fecha_hora', $hoy)->sum('total');
-        $ventasMes = Venta::where('fecha_hora', '>=', $mesActual)->sum('total');
-        $ventasMesAnterior = Venta::whereBetween('fecha_hora', [
-            $mesAnterior,
-            $mesAnterior->copy()->endOfMonth()
-        ])->sum('total');
-        $totalVentas = Venta::sum('total');
+            // === VENTAS ===
+            $ventasHoy = Venta::whereDate('fecha_hora', $hoy)->sum('total');
+            $ventasMes = Venta::where('fecha_hora', '>=', $mesActual)->sum('total');
+            $ventasMesAnterior = Venta::whereBetween('fecha_hora', [
+                $mesAnterior,
+                $mesAnterior->copy()->endOfMonth()
+            ])->sum('total');
+            $totalVentas = Venta::sum('total');
 
-        // === INVENTARIO ===
-        $productosBajoStock = Inventario::where('saldo_stock', '<', 10)->count();
-        $productosAgotados = Inventario::where('saldo_stock', '<=', 0)->count();
-        $valorTotalInventario = Inventario::join('articulos', 'inventarios.articulo_id', '=', 'articulos.id')
-            ->sum(DB::raw('inventarios.saldo_stock * articulos.precio_costo_unid'));
+            // === INVENTARIO ===
+            $productosBajoStock = Inventario::where('saldo_stock', '<', 10)->count();
+            $productosAgotados = Inventario::where('saldo_stock', '<=', 0)->count();
+            $valorTotalInventario = Inventario::join('articulos', 'inventarios.articulo_id', '=', 'articulos.id')
+                ->sum(DB::raw('inventarios.saldo_stock * articulos.precio_costo_unid'));
 
-        // === COMPRAS ===
-        $comprasMes = CompraBase::where('fecha_hora', '>=', $mesActual)->sum('total');
+            // === COMPRAS ===
+            $comprasMes = CompraBase::where('fecha_hora', '>=', $mesActual)->sum('total');
 
-        // === CRÉDITOS ===
-        $creditosVentaPendientes = DB::table('credito_ventas')
-            ->where('estado', '!=', 'Pagado')
-            ->count();
-        $montoCreditosVentas = DB::table('credito_ventas')
-            ->where('estado', '!=', 'Pagado')
-            ->sum('total');
+            // === CRÉDITOS ===
+            $creditosVentaPendientes = DB::table('credito_ventas')
+                ->where('estado', '!=', 'Pagado')
+                ->count();
+            $montoCreditosVentas = DB::table('credito_ventas')
+                ->where('estado', '!=', 'Pagado')
+                ->sum('total');
 
-        // === TENDENCIAS ===
-        $crecimientoVentas = $ventasMesAnterior > 0
-            ? (($ventasMes - $ventasMesAnterior) / $ventasMesAnterior) * 100
-            : 0;
+            // === TENDENCIAS ===
+            $crecimientoVentas = $ventasMesAnterior > 0
+                ? (($ventasMes - $ventasMesAnterior) / $ventasMesAnterior) * 100
+                : 0;
 
-        // === MARGEN ===
-        $margenBruto = $ventasMes > 0 && $comprasMes > 0
-            ? (($ventasMes - $comprasMes) / $ventasMes) * 100
-            : 0;
+            // === MARGEN ===
+            $margenBruto = $ventasMes > 0 && $comprasMes > 0
+                ? (($ventasMes - $comprasMes) / $ventasMes) * 100
+                : 0;
 
-        return response()->json([
-            // Ventas
-            'ventas_hoy' => round($ventasHoy, 2),
-            'ventas_mes' => round($ventasMes, 2),
-            'ventas_mes_anterior' => round($ventasMesAnterior, 2),
-            'total_ventas' => round($totalVentas, 2),
-            'crecimiento_ventas' => round($crecimientoVentas, 2),
+            return response()->json([
+                // Ventas
+                'ventas_hoy' => round($ventasHoy, 2),
+                'ventas_mes' => round($ventasMes, 2),
+                'ventas_mes_anterior' => round($ventasMesAnterior, 2),
+                'total_ventas' => round($totalVentas, 2),
+                'crecimiento_ventas' => round($crecimientoVentas, 2),
 
-            // Inventario
-            'productos_bajo_stock' => $productosBajoStock,
-            'productos_agotados' => $productosAgotados,
-            'valor_total_inventario' => round($valorTotalInventario, 2),
+                // Inventario
+                'productos_bajo_stock' => $productosBajoStock,
+                'productos_agotados' => $productosAgotados,
+                'valor_total_inventario' => round($valorTotalInventario, 2),
 
-            // Compras
-            'compras_mes' => round($comprasMes, 2),
+                // Compras
+                'compras_mes' => round($comprasMes, 2),
 
-            // Créditos
-            'creditos_pendientes' => $creditosVentaPendientes,
-            'monto_creditos_pendientes' => round($montoCreditosVentas, 2),
+                // Créditos
+                'creditos_pendientes' => $creditosVentaPendientes,
+                'monto_creditos_pendientes' => round($montoCreditosVentas, 2),
 
-            // Análisis
-            'margen_bruto' => round($margenBruto, 2)
-        ]);
+                // Análisis
+                'margen_bruto' => round($margenBruto, 2)
+            ]);
+        });
     }
 
     public function getVentasRecientes()
     {
-        $ventas = Venta::with(['cliente', 'user', 'tipoVenta', 'tipoPago'])
-            ->orderBy('fecha_hora', 'desc')
-            ->limit(5)
-            ->get();
+        // Cachear ventas recientes por 2 minutos
+        return Cache::remember('dashboard.ventas_recientes', 120, function () {
+            $ventas = Venta::with(['cliente', 'user', 'tipoVenta', 'tipoPago'])
+                ->orderBy('fecha_hora', 'desc')
+                ->limit(5)
+                ->get();
 
-        return response()->json($ventas);
+            return response()->json($ventas);
+        });
     }
 
     public function getProductosTop()
     {
-        // Productos más vendidos
-        $masVendidos = DetalleVenta::select(
-            'articulo_id',
-            DB::raw('SUM(cantidad) as cantidad_vendida'),
-            DB::raw('SUM(cantidad * precio) as total_ventas')
-        )
-            ->with('articulo')
-            ->groupBy('articulo_id')
-            ->orderByDesc('cantidad_vendida')
-            ->take(5)
-            ->get();
+        // Cachear productos top por 5 minutos
+        return Cache::remember('dashboard.productos_top', 300, function () {
+            // Productos más vendidos
+            $masVendidos = DetalleVenta::select(
+                'articulo_id',
+                DB::raw('SUM(cantidad) as cantidad_vendida'),
+                DB::raw('SUM(cantidad * precio) as total_ventas')
+            )
+                ->with('articulo')
+                ->groupBy('articulo_id')
+                ->orderByDesc('cantidad_vendida')
+                ->take(5)
+                ->get();
 
-        // Productos menos vendidos (con al menos 1 venta)
-        $menosVendidos = DetalleVenta::select(
-            'articulo_id',
-            DB::raw('SUM(cantidad) as cantidad_vendida'),
-            DB::raw('SUM(cantidad * precio) as total_ventas')
-        )
-            ->with('articulo')
-            ->groupBy('articulo_id')
-            ->having('cantidad_vendida', '>', 0)
-            ->orderBy('cantidad_vendida', 'asc')
-            ->take(5)
-            ->get();
+            // Productos menos vendidos (con al menos 1 venta)
+            $menosVendidos = DetalleVenta::select(
+                'articulo_id',
+                DB::raw('SUM(cantidad) as cantidad_vendida'),
+                DB::raw('SUM(cantidad * precio) as total_ventas')
+            )
+                ->with('articulo')
+                ->groupBy('articulo_id')
+                ->having('cantidad_vendida', '>', 0)
+                ->orderBy('cantidad_vendida', 'asc')
+                ->take(5)
+                ->get();
 
-        return response()->json([
-            'mas_vendidos' => $masVendidos,
-            'menos_vendidos' => $menosVendidos
-        ]);
+            return response()->json([
+                'mas_vendidos' => $masVendidos,
+                'menos_vendidos' => $menosVendidos
+            ]);
+        });
     }
 
     public function getVentasChart()
     {
-        // Tendencia de ventas (últimos 7 días)
-        $dias = 7;
-        $labels = [];
-        $data = [];
+        // Cachear gráfica de ventas por 5 minutos
+        return Cache::remember('dashboard.ventas_chart', 300, function () {
+            // Tendencia de ventas (últimos 7 días)
+            $dias = 7;
+            $labels = [];
+            $data = [];
 
-        for ($i = $dias - 1; $i >= 0; $i--) {
-            $fecha = Carbon::today()->subDays($i);
-            $labels[] = $fecha->format('d/m');
+            for ($i = $dias - 1; $i >= 0; $i--) {
+                $fecha = Carbon::today()->subDays($i);
+                $labels[] = $fecha->format('d/m');
 
-            $totalDia = Venta::whereDate('fecha_hora', $fecha)->sum('total');
-            $data[] = $totalDia;
-        }
+                $totalDia = Venta::whereDate('fecha_hora', $fecha)->sum('total');
+                $data[] = $totalDia;
+            }
 
-        return response()->json([
-            'labels' => $labels,
-            'data' => $data
-        ]);
+            return response()->json([
+                'labels' => $labels,
+                'data' => $data
+            ]);
+        });
     }
 
     public function getInventarioChart()
     {
-        // Valor de inventario por categoría
-        $data = Inventario::join('articulos', 'inventarios.articulo_id', '=', 'articulos.id')
-            ->join('categorias', 'articulos.categoria_id', '=', 'categorias.id')
-            ->select(
-                'categorias.nombre as categoria',
-                DB::raw('SUM(inventarios.saldo_stock * articulos.precio_costo_unid) as valor')
-            )
-            ->groupBy('categorias.nombre')
-            ->orderByDesc('valor')
-            ->take(6)
-            ->get();
+        // Cachear gráfica de inventario por 10 minutos
+        return Cache::remember('dashboard.inventario_chart', 600, function () {
+            // Valor de inventario por categoría
+            $data = Inventario::join('articulos', 'inventarios.articulo_id', '=', 'articulos.id')
+                ->join('categorias', 'articulos.categoria_id', '=', 'categorias.id')
+                ->select(
+                    'categorias.nombre as categoria',
+                    DB::raw('SUM(inventarios.saldo_stock * articulos.precio_costo_unid) as valor')
+                )
+                ->groupBy('categorias.nombre')
+                ->orderByDesc('valor')
+                ->take(6)
+                ->get();
 
-        return response()->json([
-            'labels' => $data->pluck('categoria'),
-            'data' => $data->pluck('valor')
-        ]);
+            return response()->json([
+                'labels' => $data->pluck('categoria'),
+                'data' => $data->pluck('valor')
+            ]);
+        });
     }
 
     public function getComparativaChart()
