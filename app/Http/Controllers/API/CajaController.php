@@ -35,7 +35,34 @@ class CajaController extends Controller
         $query = $this->applySorting($query, $request, $sortableFields, 'id', 'desc');
 
         // Aplicar paginación
-        return $this->paginateResponse($query, $request, 15, 100);
+        $response = $this->paginateResponse($query, $request, 15, 100);
+        
+        // Calcular saldo disponible para cada caja en la respuesta
+        if (isset($response->original['data']['data'])) {
+            foreach ($response->original['data']['data'] as &$caja) {
+                // Calcular saldo disponible
+                $saldoInicial = (float) ($caja['saldo_inicial'] ?? 0);
+                $depositos = (float) ($caja['depositos'] ?? 0);
+                $ventas = (float) ($caja['ventas'] ?? 0);
+                $pagosEfectivo = (float) ($caja['pagos_efectivo'] ?? 0);
+                $pagosQr = (float) ($caja['pagos_qr'] ?? 0);
+                $pagosTransferencia = (float) ($caja['pagos_transferencia'] ?? 0);
+                $cuotasVentasCredito = (float) ($caja['cuotas_ventas_credito'] ?? 0);
+                $salidas = (float) ($caja['salidas'] ?? 0);
+                $comprasContado = (float) ($caja['compras_contado'] ?? 0);
+                $comprasCredito = (float) ($caja['compras_credito'] ?? 0);
+                $saldoFaltante = (float) ($caja['saldo_faltante'] ?? 0);
+                
+                $saldoDisponible = $saldoInicial + $depositos + $ventas + $pagosEfectivo + $pagosQr + 
+                                  $pagosTransferencia + $cuotasVentasCredito - $salidas - 
+                                  $comprasContado - $comprasCredito - $saldoFaltante;
+                
+                // Actualizar el saldo_caja en el objeto caja
+                $caja['saldo_caja'] = round($saldoDisponible, 2);
+            }
+        }
+        
+        return $response;
     }
 
     public function store(Request $request)
@@ -165,6 +192,27 @@ class CajaController extends Controller
         }
 
         $caja->load(['sucursal', 'user']);
+        
+        // Calcular saldo disponible
+        $saldoInicial = (float) ($caja->saldo_inicial ?? 0);
+        $depositos = (float) ($caja->depositos ?? 0);
+        $ventas = (float) ($caja->ventas ?? 0);
+        $pagosEfectivo = (float) ($caja->pagos_efectivo ?? 0);
+        $pagosQr = (float) ($caja->pagos_qr ?? 0);
+        $pagosTransferencia = (float) ($caja->pagos_transferencia ?? 0);
+        $cuotasVentasCredito = (float) ($caja->cuotas_ventas_credito ?? 0);
+        $salidas = (float) ($caja->salidas ?? 0);
+        $comprasContado = (float) ($caja->compras_contado ?? 0);
+        $comprasCredito = (float) ($caja->compras_credito ?? 0);
+        $saldoFaltante = (float) ($caja->saldo_faltante ?? 0);
+        
+        $saldoDisponible = $saldoInicial + $depositos + $ventas + $pagosEfectivo + $pagosQr + 
+                          $pagosTransferencia + $cuotasVentasCredito - $salidas - 
+                          $comprasContado - $comprasCredito - $saldoFaltante;
+        
+        // Actualizar el saldo_caja en el objeto caja
+        $caja->saldo_caja = round($saldoDisponible, 2);
+        
         return response()->json($caja);
     }
 
@@ -332,6 +380,9 @@ class CajaController extends Controller
         $saldoFinal = $saldoInicial + $calculado['total_ventas'] + $calculado['entradas'] - 
                      $calculado['total_compras'] - $calculado['salidas'];
         $calculado['saldo_final'] = round($saldoFinal, 2);
+
+        // Actualizar el saldo_caja en el objeto caja para que esté disponible en la respuesta
+        $caja->saldo_caja = $saldoFinal;
 
         // Obtener ventas, compras y transacciones para mostrar en detalle
         $ventas = \App\Models\Venta::where('caja_id', $id)

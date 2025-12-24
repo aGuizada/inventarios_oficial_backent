@@ -7,6 +7,7 @@ use App\Http\Traits\HasPagination;
 use App\Models\Articulo;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Storage;
+use Illuminate\Support\Facades\Log;
 use Maatwebsite\Excel\Excel as ExcelService;
 use App\Exports\ArticulosExport;
 use App\Imports\ArticulosImport;
@@ -256,9 +257,17 @@ class ArticuloController extends Controller
      */
     public function exportPDF()
     {
-        $articulos = Articulo::with(['categoria', 'marca', 'medida', 'industria'])->get();
-        $pdf = Pdf::loadView('pdf.articulos', compact('articulos'));
-        $pdf->setPaper('a4', 'landscape');
-        return $pdf->download('articulos.pdf');
+        try {
+            $articulos = Articulo::with(['categoria', 'marca', 'medida', 'industria', 'inventarios'])->get();
+            $pdf = Pdf::loadView('pdf.articulos', compact('articulos'));
+            $pdf->setPaper('a4', 'landscape');
+            return $pdf->download('articulos.pdf');
+        } catch (\Exception $e) {
+            Log::error('Error al generar PDF de artículos: ' . $e->getMessage());
+            return response()->json([
+                'message' => 'Error al generar el PDF',
+                'error' => $e->getMessage()
+            ], 500);
+        }
     }
 }

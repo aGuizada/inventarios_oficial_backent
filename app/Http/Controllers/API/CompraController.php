@@ -163,6 +163,15 @@ class CompraController extends Controller
             // Calcular totales en el backend
             $descuentoGlobal = (float) ($request->descuento_global ?? 0);
             $resultadoCalculo = $this->calcularTotales($request->detalles, $descuentoGlobal);
+            
+            // Verificar que $resultadoCalculo sea un array
+            if (!is_array($resultadoCalculo)) {
+                DB::rollBack();
+                return response()->json([
+                    'error' => 'Error al crear la compra',
+                    'message' => 'Error interno al calcular totales de la compra'
+                ], 500);
+            }
 
             // Preparar datos de la compra
             $compraData = $request->except(['detalles', 'numero_cuotas', 'monto_pagado', 'proveedor_nombre', 'total']);
@@ -187,15 +196,76 @@ class CompraController extends Controller
 
             // Validar que haya una caja abierta
             if (!isset($compraData['caja_id']) || empty($compraData['caja_id'])) {
-                // Buscar la primera caja abierta
-                $cajaAbierta = Caja::where('estado', 1)->orWhere('estado', '1')->orWhere('estado', true)->first();
+                // Buscar la caja abierta de la sucursal del almacén seleccionado
+                $almacenId = $compraData['almacen_id'] ?? null;
+                $sucursalId = null;
+                
+                if ($almacenId) {
+                    // Obtener la sucursal del almacén
+                    $almacen = \App\Models\Almacen::find($almacenId);
+                    $sucursalId = $almacen ? $almacen->sucursal_id : null;
+                }
+                
+                // Construir consulta para buscar caja abierta de la sucursal correcta
+                $queryCaja = Caja::where(function($query) {
+                    $query->where('estado', 1)
+                          ->orWhere('estado', '1')
+                          ->orWhere('estado', true)
+                          ->orWhere('estado', 'abierta');
+                });   
+                
+                // Si tenemos sucursal, filtrar por ella
+                if ($sucursalId) {
+                    $queryCaja->where('sucursal_id', $sucursalId);
+                }
+                
+                $cajaAbierta = $queryCaja->first();
+                
                 if (!$cajaAbierta) {
+                    $mensaje = $sucursalId 
+                        ? 'No hay una caja abierta para la sucursal del almacén seleccionado. Por favor, abra una caja antes de realizar compras.'
+                        : 'No hay una caja abierta. Por favor, abra una caja antes de realizar compras.';
+                    
                     DB::rollBack();
                     return response()->json([
                         'error' => 'Error al crear la compra',
-                        'message' => 'No hay una caja abierta. Por favor, abra una caja antes de realizar compras.'
+                        'message' => $mensaje
                     ], 400);
                 }
+                
+                // Validar que haya suficiente saldo en la caja para la compra
+                $saldoDisponible = $cajaAbierta->calcularSaldoDisponible();
+                // Verificar que $resultadoCalculo sea un array antes de acceder a sus elementos
+                if (!is_array($resultadoCalculo) || !isset($resultadoCalculo['total'])) {
+                    DB::rollBack();
+                    return response()->json([
+                        'error' => 'Error al crear la compra',
+                        'message' => 'Error interno al calcular totales de la compra'
+                    ], 500);
+                }
+                $totalCompra = $resultadoCalculo['total'];
+                
+                // Determinar el monto a descontar según el tipo de compra
+                $tipoCompraValidacion = strtolower(trim($compraData['tipo_compra'] ?? 'contado'));
+                $montoADescontar = 0;
+                
+                if ($tipoCompraValidacion === 'contado') {
+                    // Para compras de contado, se descuenta el total completo
+                    $montoADescontar = $totalCompra;
+                } else if ($tipoCompraValidacion === 'credito') {
+                    // Para compras a crédito, solo se descuenta la cuota inicial si existe
+                    $montoADescontar = (float) ($compraData['monto_pagado'] ?? 0);
+                }
+                
+                // Validar que el saldo sea suficiente para la compra
+                if ($saldoDisponible < $montoADescontar) {
+                    DB::rollBack();
+                    return response()->json([
+                        'error' => 'Error al crear la compra',
+                        'message' => 'Saldo insuficiente de caja. Saldo disponible: Q' . number_format($saldoDisponible, 2) . '. Monto requerido: Q' . number_format($montoADescontar, 2)
+                    ], 400);
+                }
+                
                 $compraData['caja_id'] = $cajaAbierta->id;
             } else {
                 $compraData['caja_id'] = (int) $compraData['caja_id'];
@@ -211,16 +281,62 @@ class CompraController extends Controller
                 }
 
                 // Verificar que la caja esté abierta (estado = 1, '1', true, o 'abierta')
-                $isCajaOpen = $caja->estado === 1 ||
+                $isCajaOpen = ($caja->estado === 1 ||
                     $caja->estado === '1' ||
                     $caja->estado === true ||
-                    $caja->estado === 'abierta';
+                    $caja->estado === 'abierta');
 
                 if (!$isCajaOpen) {
                     DB::rollBack();
                     return response()->json([
                         'error' => 'Error al crear la compra',
                         'message' => 'La caja seleccionada está cerrada. Solo se pueden realizar compras con una caja abierta.'
+                    ], 400);
+                }
+                
+                // Verificar que la caja pertenezca a la sucursal del almacén seleccionado
+                $almacenId = $compraData['almacen_id'] ?? null;
+                if ($almacenId) {
+                    $almacen = \App\Models\Almacen::find($almacenId);
+                    if ($almacen && $caja->sucursal_id != $almacen->sucursal_id) {
+                        DB::rollBack();
+                        return response()->json([
+                            'error' => 'Error al crear la compra',
+                            'message' => 'La caja seleccionada no pertenece a la sucursal del almacén elegido. Por favor, seleccione el almacén correcto o use una caja de la misma sucursal.'
+                        ], 400);
+                    }
+                }
+                
+                // Validar que haya suficiente saldo en la caja para la compra
+                $saldoDisponible = $caja->calcularSaldoDisponible();
+                // Verificar que $resultadoCalculo sea un array antes de acceder a sus elementos
+                if (!is_array($resultadoCalculo) || !isset($resultadoCalculo['total'])) {
+                    DB::rollBack();
+                    return response()->json([
+                        'error' => 'Error al crear la compra',
+                        'message' => 'Error interno al calcular totales de la compra'
+                    ], 500);
+                }
+                $totalCompra = $resultadoCalculo['total'];
+                
+                // Determinar el monto a descontar según el tipo de compra
+                $tipoCompraValidacion = strtolower(trim($compraData['tipo_compra'] ?? 'contado'));
+                $montoADescontar = 0;
+                
+                if ($tipoCompraValidacion === 'contado') {
+                    // Para compras de contado, se descuenta el total completo
+                    $montoADescontar = $totalCompra;
+                } else if ($tipoCompraValidacion === 'credito') {
+                    // Para compras a crédito, solo se descuenta la cuota inicial si existe
+                    $montoADescontar = (float) ($compraData['monto_pagado'] ?? 0);
+                }
+                
+                // Validar que el saldo sea suficiente para la compra
+                if ($saldoDisponible < $montoADescontar) {
+                    DB::rollBack();
+                    return response()->json([
+                        'error' => 'Error al crear la compra',
+                        'message' => 'Saldo insuficiente de caja. Saldo disponible: Q' . number_format($saldoDisponible, 2) . '. Monto requerido: Q' . number_format($montoADescontar, 2)
                     ], 400);
                 }
             }
