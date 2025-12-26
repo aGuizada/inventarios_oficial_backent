@@ -66,8 +66,19 @@ class KardexService
             // Validar datos requeridos
             $this->validarDatos($datos);
 
-            // Calcular saldo anterior
-            $saldoAnterior = $this->calcularSaldo($datos['articulo_id'], $datos['almacen_id']);
+            // Obtener el saldo actual del inventario (fuente de verdad)
+            // El inventario.saldo_stock es la fuente de verdad, no el kardex
+            $inventario = Inventario::where('articulo_id', $datos['articulo_id'])
+                ->where('almacen_id', $datos['almacen_id'])
+                ->first();
+            
+            // Usar el saldo_stock del inventario como saldo anterior (más confiable que kardex)
+            if ($inventario) {
+                $saldoAnterior = $inventario->saldo_stock ?? 0;
+            } else {
+                // Si no hay inventario, intentar calcular desde kardex como fallback
+                $saldoAnterior = $this->calcularSaldo($datos['articulo_id'], $datos['almacen_id']);
+            }
 
             $cantidadEntrada = $datos['cantidad_entrada'] ?? 0;
             $cantidadSalida = $datos['cantidad_salida'] ?? 0;

@@ -104,6 +104,7 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::apiResource('configuracion-trabajo', ConfiguracionTrabajoController::class);
 
     // Cotizaciones
+    Route::get('cotizaciones/{id}/proforma-pdf', [CotizacionController::class, 'generarProformaPDF']);
     Route::apiResource('cotizaciones', CotizacionController::class);
 
     // Créditos de Venta
@@ -233,6 +234,8 @@ Route::middleware('auth:sanctum')->group(function () {
     // Ventas
     Route::get('ventas/productos-inventario', [VentaController::class, 'productosInventario']);
     Route::get('ventas/{id}/imprimir/{formato}', [VentaController::class, 'imprimirComprobante']);
+    Route::get('ventas/reporte/detallado-pdf', [VentaController::class, 'exportReporteDetalladoPDF']);
+    Route::get('ventas/reporte/general-pdf', [VentaController::class, 'exportReporteGeneralPDF']);
     Route::apiResource('ventas', VentaController::class);
     // Dashboard
     Route::prefix('dashboard')->group(function () {

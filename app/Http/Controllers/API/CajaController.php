@@ -57,8 +57,11 @@ class CajaController extends Controller
                                   $pagosTransferencia + $cuotasVentasCredito - $salidas - 
                                   $comprasContado - $comprasCredito - $saldoFaltante;
                 
+                // Asegurar que el saldo no sea negativo (si es negativo, mostrar 0)
+                $saldoDisponible = max(0, round($saldoDisponible, 2));
+                
                 // Actualizar el saldo_caja en el objeto caja
-                $caja['saldo_caja'] = round($saldoDisponible, 2);
+                $caja['saldo_caja'] = $saldoDisponible;
             }
         }
         
@@ -377,9 +380,13 @@ class CajaController extends Controller
 
         // Calcular saldo final
         $saldoInicial = (float) ($caja->saldo_inicial ?? 0);
+        $saldoFaltante = (float) ($caja->saldo_faltante ?? 0);
         $saldoFinal = $saldoInicial + $calculado['total_ventas'] + $calculado['entradas'] - 
-                     $calculado['total_compras'] - $calculado['salidas'];
-        $calculado['saldo_final'] = round($saldoFinal, 2);
+                     $calculado['total_compras'] - $calculado['salidas'] - $saldoFaltante;
+        
+        // Asegurar que el saldo no sea negativo (si es negativo, mostrar 0)
+        $saldoFinal = max(0, round($saldoFinal, 2));
+        $calculado['saldo_final'] = $saldoFinal;
 
         // Actualizar el saldo_caja en el objeto caja para que esté disponible en la respuesta
         $caja->saldo_caja = $saldoFinal;
@@ -416,12 +423,18 @@ class CajaController extends Controller
             
             // Calcular saldo final
             $saldoInicial = (float) ($caja->saldo_inicial ?? 0);
+            $saldoFaltante = (float) ($caja->saldo_faltante ?? 0);
+            
+            // Calcular saldo final: saldo inicial + ventas + entradas - compras - salidas - saldo faltante
             $saldoFinal = $saldoInicial + $calculado['total_ventas'] + $calculado['entradas'] - 
-                         $calculado['total_compras'] - $calculado['salidas'];
+                         $calculado['total_compras'] - $calculado['salidas'] - $saldoFaltante;
+            
+            // Asegurar que el saldo no sea negativo (si es negativo, mostrar 0)
+            $saldoFinal = max(0, round($saldoFinal, 2));
             
             return [
                 'id' => $caja->id,
-                'saldo_caja' => round($saldoFinal, 2),
+                'saldo_caja' => $saldoFinal,
                 'ventas' => $calculado['total_ventas'], // Suma de TODAS las ventas (contado + crédito + QR)
                 'compras' => $calculado['total_compras'],
                 'depositos' => $calculado['entradas'],

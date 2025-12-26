@@ -227,11 +227,33 @@ class InventarioController extends Controller
     /**
      * Exporta inventario a Excel
      */
+    public function exportExcel()
+    {
+        try {
+            return Excel::download(new InventariosExport, 'inventario.xlsx');
+        } catch (\Exception $e) {
+            \Log::error('Error al exportar inventario a Excel: ' . $e->getMessage());
+            return response()->json([
+                'message' => 'Error al exportar Excel: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Exporta inventario a PDF
+     */
     public function exportPDF()
     {
-        $inventarios = Inventario::with(['articulo', 'almacen'])->get();
-        $pdf = Pdf::loadView('pdf.inventarios', compact('inventarios'));
-        $pdf->setPaper('a4', 'landscape');
-        return $pdf->download('inventario.pdf');
+        try {
+            $inventarios = Inventario::with(['articulo', 'almacen'])->get();
+            $pdf = Pdf::loadView('pdf.inventarios', compact('inventarios'));
+            $pdf->setPaper('a4', 'landscape');
+            return $pdf->download('inventario.pdf');
+        } catch (\Exception $e) {
+            \Log::error('Error al exportar inventario a PDF: ' . $e->getMessage());
+            return response()->json([
+                'message' => 'Error al exportar PDF: ' . $e->getMessage()
+            ], 500);
+        }
     }
 }

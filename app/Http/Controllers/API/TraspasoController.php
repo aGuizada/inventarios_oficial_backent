@@ -75,10 +75,51 @@ class TraspasoController extends Controller
             // Asegurar que el estado inicial sea PENDIENTE
             $traspasoData = $request->except('detalles');
             $traspasoData['estado'] = $traspasoData['estado'] ?? 'PENDIENTE';
+            
+            // Formatear fecha_solicitud si viene en formato ISO
+            if (isset($traspasoData['fecha_solicitud'])) {
+                try {
+                    $fechaSolicitud = \Carbon\Carbon::parse($traspasoData['fecha_solicitud']);
+                    $traspasoData['fecha_solicitud'] = $fechaSolicitud->format('Y-m-d H:i:s');
+                } catch (\Exception $e) {
+                    \Log::warning('Error al formatear fecha_solicitud: ' . $e->getMessage());
+                    // Si falla, usar la fecha actual
+                    $traspasoData['fecha_solicitud'] = now()->format('Y-m-d H:i:s');
+                }
+            }
+            
             $traspaso = Traspaso::create($traspasoData);
 
-            if ($request->has('detalles')) {
+            if ($request->has('detalles') && is_array($request->detalles)) {
                 foreach ($request->detalles as $detalle) {
+                    // Validar que el inventario_id existe
+                    if (!isset($detalle['inventario_id'])) {
+                        DB::rollBack();
+                        return response()->json([
+                            'error' => 'Error al crear el traspaso',
+                            'message' => 'El campo inventario_id es requerido en los detalles'
+                        ], 400);
+                    }
+
+                    // Validar que el inventario existe
+                    $inventario = Inventario::find($detalle['inventario_id']);
+                    if (!$inventario) {
+                        DB::rollBack();
+                        return response()->json([
+                            'error' => 'Error al crear el traspaso',
+                            'message' => "El inventario con ID {$detalle['inventario_id']} no existe"
+                        ], 400);
+                    }
+
+                    // Validar que el inventario pertenece al almacén origen
+                    if ($inventario->almacen_id != $traspasoData['almacen_origen_id']) {
+                        DB::rollBack();
+                        return response()->json([
+                            'error' => 'Error al crear el traspaso',
+                            'message' => "El inventario con ID {$detalle['inventario_id']} no pertenece al almacén origen seleccionado"
+                        ], 400);
+                    }
+
                     DetalleTraspaso::create([
                         'traspaso_id' => $traspaso->id,
                         'articulo_id' => $detalle['articulo_id'],
@@ -96,7 +137,16 @@ class TraspasoController extends Controller
             return response()->json($traspaso, 201);
         } catch (\Exception $e) {
             DB::rollBack();
-            return response()->json(['error' => 'Error al crear el traspaso'], 500);
+            \Log::error('Error al crear traspaso', [
+                'message' => $e->getMessage(),
+                'file' => $e->getFile(),
+                'line' => $e->getLine(),
+                'trace' => $e->getTraceAsString()
+            ]);
+            return response()->json([
+                'error' => 'Error al crear el traspaso',
+                'message' => $e->getMessage()
+            ], 500);
         }
     }
 

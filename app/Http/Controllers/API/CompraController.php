@@ -262,7 +262,7 @@ class CompraController extends Controller
                     DB::rollBack();
                     return response()->json([
                         'error' => 'Error al crear la compra',
-                        'message' => 'Saldo insuficiente de caja. Saldo disponible: Q' . number_format($saldoDisponible, 2) . '. Monto requerido: Q' . number_format($montoADescontar, 2)
+                        'message' => 'Saldo insuficiente de caja. Saldo disponible: Bs. ' . number_format($saldoDisponible, 2) . '. Monto requerido: Bs. ' . number_format($montoADescontar, 2)
                     ], 400);
                 }
                 
@@ -336,7 +336,7 @@ class CompraController extends Controller
                     DB::rollBack();
                     return response()->json([
                         'error' => 'Error al crear la compra',
-                        'message' => 'Saldo insuficiente de caja. Saldo disponible: Q' . number_format($saldoDisponible, 2) . '. Monto requerido: Q' . number_format($montoADescontar, 2)
+                        'message' => 'Saldo insuficiente de caja. Saldo disponible: Bs. ' . number_format($saldoDisponible, 2) . '. Monto requerido: Bs. ' . number_format($montoADescontar, 2)
                     ], 400);
                 }
             }

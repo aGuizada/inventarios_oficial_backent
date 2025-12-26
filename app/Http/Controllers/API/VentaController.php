@@ -139,6 +139,7 @@ class VentaController extends Controller
     public function productosInventario(Request $request)
     {
         $almacenId = $request->get('almacen_id');
+        $incluirSinStock = $request->get('incluir_sin_stock', false);
 
         $query = Inventario::with([
             'articulo.categoria',
@@ -147,8 +148,12 @@ class VentaController extends Controller
             'articulo.industria',
             'articulo.proveedor',
             'almacen'
-        ])
-            ->where('saldo_stock', '>', 0);
+        ]);
+
+        // Si no se solicita incluir sin stock, solo mostrar con stock > 0
+        if (!$incluirSinStock) {
+            $query->where('saldo_stock', '>', 0);
+        }
 
         if ($almacenId) {
             $query->where('almacen_id', $almacenId);
@@ -162,7 +167,7 @@ class VentaController extends Controller
                 'inventario_id' => $inventario->id,
                 'articulo_id' => $inventario->articulo_id,
                 'almacen_id' => $inventario->almacen_id,
-                'stock_disponible' => $inventario->saldo_stock,
+                'stock_disponible' => $inventario->saldo_stock ?? 0,
                 'cantidad' => $inventario->cantidad,
                 'articulo' => $inventario->articulo,
                 'almacen' => $inventario->almacen,
@@ -189,7 +194,7 @@ class VentaController extends Controller
                 'almacen_id' => 'required|exists:almacenes,id',
                 'detalles' => 'required|array|min:1',
                 'detalles.*.articulo_id' => 'required|exists:articulos,id',
-                'detalles.*.cantidad' => 'required|integer|min:1',
+                'detalles.*.cantidad' => 'required|numeric|min:0.01',
                 'detalles.*.precio' => 'required|numeric|min:0',
                 'detalles.*.descuento' => 'nullable|numeric|min:0',
                 'detalles.*.unidad_medida' => 'nullable|string|in:Unidad,Paquete,Centimetro',
@@ -259,7 +264,7 @@ class VentaController extends Controller
 
             foreach ($request->detalles as $index => $detalle) {
                 $articuloId = (int) $detalle['articulo_id'];
-                $cantidadVenta = (int) $detalle['cantidad'];
+                $cantidadVenta = (float) $detalle['cantidad']; // Permitir decimales para Centimetro
 
                 // Buscar inventario del artículo
                 $inventario = Inventario::where('articulo_id', $articuloId)
@@ -287,13 +292,29 @@ class VentaController extends Controller
                     $cantidadDeducir = $cantidadVenta / 100;
                 }
 
-                if ($inventario->saldo_stock < $cantidadDeducir) {
+                // Validar que el stock disponible sea suficiente
+                $stockDisponible = $inventario->saldo_stock ?? 0;
+                if ($stockDisponible < $cantidadDeducir) {
                     DB::rollBack();
                     return response()->json([
                         'message' => 'Error de validación',
                         'errors' => [
                             "detalles.{$index}.cantidad" => [
-                                "Stock insuficiente. Disponible: {$inventario->saldo_stock} (Unidades). Solicitado: {$cantidadDeducir} (Unidades) para {$cantidadVenta} {$unidadMedida}(s).",
+                                "Stock insuficiente. Disponible: {$stockDisponible} (Unidades). Solicitado: {$cantidadDeducir} (Unidades) para {$cantidadVenta} {$unidadMedida}(s).",
+                                "Artículo: " . ($articulo ? $articulo->nombre : "ID {$articuloId}")
+                            ]
+                        ]
+                    ], 422);
+                }
+                
+                // Validar también que el stock no sea negativo o cero cuando se intenta vender
+                if ($stockDisponible <= 0) {
+                    DB::rollBack();
+                    return response()->json([
+                        'message' => 'Error de validación',
+                        'errors' => [
+                            "detalles.{$index}.cantidad" => [
+                                "El artículo no tiene stock disponible. Stock actual: {$stockDisponible}",
                                 "Artículo: " . ($articulo ? $articulo->nombre : "ID {$articuloId}")
                             ]
                         ]
@@ -302,7 +323,8 @@ class VentaController extends Controller
             }
 
             // Preparar datos de la venta con el total calculado
-            $ventaData = $request->except(['detalles', 'pagos', 'total']);
+            // Excluir campos que no pertenecen al modelo Venta
+            $ventaData = $request->except(['detalles', 'pagos', 'total', 'almacen_id', 'numero_cuotas', 'tiempo_dias_cuota']);
             $ventaData['total'] = $resultadoCalculo['total'];
 
             $venta = Venta::create($ventaData);
@@ -320,7 +342,7 @@ class VentaController extends Controller
 
                 // Calcular cantidad a deducir según unidad de medida
                 $articuloId = (int) $detalle['articulo_id'];
-                $cantidadVenta = (int) $detalle['cantidad'];
+                $cantidadVenta = (float) $detalle['cantidad']; // Permitir decimales para Centimetro
                 $unidadMedida = $detalle['unidad_medida'];
 
                 $articulo = Articulo::find($articuloId);
@@ -348,6 +370,28 @@ class VentaController extends Controller
                     'usuario_id' => $request->user_id,
                     'venta_id' => $venta->id
                 ]);
+            }
+
+            // Registrar crédito si es una venta a crédito
+            if ($request->has('numero_cuotas') && $request->has('tiempo_dias_cuota')) {
+                $tipoVenta = TipoVenta::find($request->tipo_venta_id);
+                $nombreTipoVenta = $tipoVenta ? strtolower(trim($tipoVenta->nombre_tipo_ventas)) : '';
+                
+                if (strpos($nombreTipoVenta, 'crédito') !== false || strpos($nombreTipoVenta, 'credito') !== false) {
+                    // Calcular fecha del próximo pago
+                    $fechaInicio = new \DateTime($request->fecha_hora);
+                    $fechaInicio->modify('+' . $request->tiempo_dias_cuota . ' days');
+                    
+                    \App\Models\CreditoVenta::create([
+                        'venta_id' => $venta->id,
+                        'cliente_id' => $request->cliente_id,
+                        'numero_cuotas' => $request->numero_cuotas,
+                        'tiempo_dias_cuota' => $request->tiempo_dias_cuota,
+                        'total' => $resultadoCalculo['total'],
+                        'estado' => 'pendiente',
+                        'proximo_pago' => $fechaInicio->format('Y-m-d H:i:s')
+                    ]);
+                }
             }
 
             // Registrar pagos mixtos si existen
@@ -544,6 +588,157 @@ class VentaController extends Controller
     }
 
     /**
+     * Exportar reporte detallado de ventas con ganancias
+     */
+    public function exportReporteDetalladoPDF(Request $request)
+    {
+        $request->validate([
+            'fecha_desde' => 'nullable|date',
+            'fecha_hasta' => 'nullable|date|after_or_equal:fecha_desde',
+            'sucursal_id' => 'nullable|exists:sucursales,id',
+        ]);
+
+        try {
+            $query = Venta::with([
+                'cliente',
+                'user',
+                'tipoVenta',
+                'tipoPago',
+                'detalles.articulo',
+                'detalles.articulo.categoria',
+                'pagos.tipoPago'
+            ]);
+
+            // Aplicar filtros
+            if ($request->fecha_desde) {
+                $query->whereDate('fecha_hora', '>=', $request->fecha_desde);
+            }
+            if ($request->fecha_hasta) {
+                $query->whereDate('fecha_hora', '<=', $request->fecha_hasta);
+            }
+            if ($request->sucursal_id) {
+                $query->whereHas('caja', function($q) use ($request) {
+                    $q->where('sucursal_id', $request->sucursal_id);
+                });
+            }
+
+            $ventas = $query->orderBy('fecha_hora', 'desc')->get();
+
+            // Calcular ganancias
+            $totalVentas = $ventas->sum('total');
+            $totalCostos = 0;
+            $totalGanancias = 0;
+
+            foreach ($ventas as $venta) {
+                foreach ($venta->detalles as $detalle) {
+                    $costo = ($detalle->articulo->precio_costo ?? 0) * $detalle->cantidad;
+                    $totalCostos += $costo;
+                }
+            }
+            $totalGanancias = $totalVentas - $totalCostos;
+
+            $datos = [
+                'ventas' => $ventas,
+                'resumen' => [
+                    'total_ventas' => $totalVentas,
+                    'total_costos' => $totalCostos,
+                    'total_ganancias' => $totalGanancias,
+                    'margen_ganancia' => $totalVentas > 0 ? ($totalGanancias / $totalVentas) * 100 : 0,
+                    'cantidad_ventas' => $ventas->count(),
+                    'fecha_desde' => $request->fecha_desde,
+                    'fecha_hasta' => $request->fecha_hasta,
+                ]
+            ];
+
+            $pdf = \Barryvdh\DomPDF\Facade\Pdf::loadView('pdf.reporte-ventas-detallado', $datos);
+            $pdf->setPaper('a4', 'portrait');
+
+            $fileName = 'reporte_ventas_detallado_' . ($request->fecha_desde ?? 'all') . '_' . ($request->fecha_hasta ?? 'all') . '.pdf';
+            return $pdf->download($fileName);
+        } catch (\Exception $e) {
+            \Log::error('Error al exportar reporte detallado PDF: ' . $e->getMessage());
+            return response()->json([
+                'message' => 'Error al exportar PDF: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Exportar reporte general de ventas por fechas
+     */
+    public function exportReporteGeneralPDF(Request $request)
+    {
+        $request->validate([
+            'fecha_desde' => 'nullable|date',
+            'fecha_hasta' => 'nullable|date|after_or_equal:fecha_desde',
+            'sucursal_id' => 'nullable|exists:sucursales,id',
+        ]);
+
+        try {
+            $query = Venta::with([
+                'cliente',
+                'user',
+                'tipoVenta',
+                'tipoPago',
+                'caja.sucursal'
+            ]);
+
+            // Aplicar filtros
+            if ($request->fecha_desde) {
+                $query->whereDate('fecha_hora', '>=', $request->fecha_desde);
+            }
+            if ($request->fecha_hasta) {
+                $query->whereDate('fecha_hora', '<=', $request->fecha_hasta);
+            }
+            if ($request->sucursal_id) {
+                $query->whereHas('caja', function($q) use ($request) {
+                    $q->where('sucursal_id', $request->sucursal_id);
+                });
+            }
+
+            $ventas = $query->orderBy('fecha_hora', 'desc')->get();
+
+            // Agrupar por fecha
+            $ventasPorFecha = $ventas->groupBy(function($venta) {
+                return \Carbon\Carbon::parse($venta->fecha_hora)->format('Y-m-d');
+            });
+
+            // Calcular resumen
+            $totalVentas = $ventas->sum('total');
+            $resumenPorFecha = [];
+            foreach ($ventasPorFecha as $fecha => $ventasDelDia) {
+                $resumenPorFecha[$fecha] = [
+                    'fecha' => $fecha,
+                    'cantidad' => $ventasDelDia->count(),
+                    'total' => $ventasDelDia->sum('total'),
+                    'ventas' => $ventasDelDia
+                ];
+            }
+
+            $datos = [
+                'ventas_por_fecha' => $resumenPorFecha,
+                'resumen' => [
+                    'total_ventas' => $totalVentas,
+                    'cantidad_ventas' => $ventas->count(),
+                    'fecha_desde' => $request->fecha_desde,
+                    'fecha_hasta' => $request->fecha_hasta,
+                ]
+            ];
+
+            $pdf = \Barryvdh\DomPDF\Facade\Pdf::loadView('pdf.reporte-ventas-general', $datos);
+            $pdf->setPaper('a4', 'landscape');
+
+            $fileName = 'reporte_ventas_general_' . ($request->fecha_desde ?? 'all') . '_' . ($request->fecha_hasta ?? 'all') . '.pdf';
+            return $pdf->download($fileName);
+        } catch (\Exception $e) {
+            \Log::error('Error al exportar reporte general PDF: ' . $e->getMessage());
+            return response()->json([
+                'message' => 'Error al exportar PDF: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
      * Check stock levels after a sale and notify if low or out of stock
      */
     private function checkStockAndNotify(Venta $venta, $almacenId): void
@@ -583,19 +778,26 @@ class VentaController extends Controller
                 continue;
             }
 
-            $currentStock = $inventario->stock_actual;
-            Log::info("Articulo '{$articulo->nombre}' - Stock actual: {$currentStock}, Stock mínimo: " . ($articulo->stock_minimo ?? 'N/A'));
+            // Usar saldo_stock que es el campo correcto que se actualiza en las ventas
+            $currentStock = $inventario->saldo_stock ?? 0;
+            $stockMinimo = $articulo->stock_minimo ?? 4; // Usar 4 como mínimo por defecto si no está definido
+            Log::info("Articulo '{$articulo->nombre}' - Stock actual (saldo_stock): {$currentStock}, Stock mínimo: {$stockMinimo}");
 
-            // Check if out of stock
+            // Notificar si está sin stock (0 o negativo)
             if ($currentStock <= 0) {
-                Log::info("Sending OUT OF STOCK notification for '{$articulo->nombre}'");
+                Log::info("Sending OUT OF STOCK notification for '{$articulo->nombre}' - Stock: {$currentStock}");
                 NotificationHelper::notifyAdmins(new OutOfStockNotification($articulo));
-                continue;
+                continue; // No verificar low stock si ya está sin stock
             }
 
-            // Check if low stock
-            if ($articulo->stock_minimo && $currentStock <= $articulo->stock_minimo) {
-                Log::info("Sending LOW STOCK notification for '{$articulo->nombre}'");
+            // Notificar si el stock está por debajo de 4 (o del stock mínimo definido)
+            // Esto incluye cuando el stock está entre 1 y 3 (o hasta el stock mínimo)
+            if ($currentStock > 0 && $currentStock < 4) {
+                Log::info("Sending LOW STOCK notification for '{$articulo->nombre}' - Stock: {$currentStock}, Mínimo esperado: 4");
+                NotificationHelper::notifyAdmins(new LowStockNotification($articulo, $currentStock));
+            } elseif ($articulo->stock_minimo && $currentStock > 0 && $currentStock <= $articulo->stock_minimo && $currentStock >= 4) {
+                // Si tiene stock mínimo definido y es mayor a 4, usar ese valor
+                Log::info("Sending LOW STOCK notification for '{$articulo->nombre}' - Stock: {$currentStock}, Mínimo: {$articulo->stock_minimo}");
                 NotificationHelper::notifyAdmins(new LowStockNotification($articulo, $currentStock));
             }
         }

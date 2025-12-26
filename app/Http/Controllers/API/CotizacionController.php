@@ -489,4 +489,84 @@ class CotizacionController extends Controller
         $cotizacion->delete();
         return response()->json(null, 204);
     }
+
+    /**
+     * Generar PDF de proforma (cotización)
+     */
+    public function generarProformaPDF($id)
+    {
+        try {
+            $cotizacion = Cotizacion::with([
+                'cliente',
+                'user',
+                'almacen',
+                'detalles.articulo',
+                'detalles.articulo.categoria',
+                'detalles.articulo.medida',
+                'detalles.articulo.marca'
+            ])->find($id);
+
+            if (!$cotizacion) {
+                return response()->json([
+                    'message' => 'Cotización no encontrada'
+                ], 404);
+            }
+
+            $pdf = \Barryvdh\DomPDF\Facade\Pdf::loadView('pdf.proforma', [
+                'cotizacion' => $cotizacion,
+                'numeroALetras' => [$this, 'numeroALetras']
+            ]);
+            $pdf->setPaper('letter', 'portrait');
+
+            $fileName = 'proforma_' . $cotizacion->id . '.pdf';
+            return $pdf->download($fileName);
+        } catch (\Exception $e) {
+            \Log::error('Error al generar proforma PDF: ' . $e->getMessage());
+            return response()->json([
+                'message' => 'Error al generar PDF: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Helper para convertir número a letras (método público)
+     */
+    public function numeroALetras($numero)
+    {
+        $unidades = ['', 'UNO', 'DOS', 'TRES', 'CUATRO', 'CINCO', 'SEIS', 'SIETE', 'OCHO', 'NUEVE'];
+        $decenas = ['', 'DIEZ', 'VEINTE', 'TREINTA', 'CUARENTA', 'CINCUENTA', 'SESENTA', 'SETENTA', 'OCHENTA', 'NOVENTA'];
+        $decenasEspeciales = ['DIEZ', 'ONCE', 'DOCE', 'TRECE', 'CATORCE', 'QUINCE', 'DIECISÉIS', 'DIECISIETE', 'DIECIOCHO', 'DIECINUEVE'];
+        $centenas = ['', 'CIEN', 'DOSCIENTOS', 'TRESCIENTOS', 'CUATROCIENTOS', 'QUINIENTOS', 'SEISCIENTOS', 'SETECIENTOS', 'OCHOCIENTOS', 'NOVECIENTOS'];
+        
+        $numero = (int) $numero;
+        if ($numero == 0) return 'CERO';
+        if ($numero < 10) return $unidades[$numero];
+        if ($numero < 20) return $decenasEspeciales[$numero - 10];
+        if ($numero < 100) {
+            $decena = (int)($numero / 10);
+            $unidad = $numero % 10;
+            if ($unidad == 0) return $decenas[$decena];
+            if ($decena == 2) return 'VEINTI' . $unidades[$unidad];
+            return $decenas[$decena] . ' Y ' . $unidades[$unidad];
+        }
+        if ($numero < 1000) {
+            $centena = (int)($numero / 100);
+            $resto = $numero % 100;
+            if ($centena == 1 && $resto == 0) return 'CIEN';
+            if ($centena == 1) return 'CIENTO ' . $this->numeroALetras($resto);
+            if ($resto == 0) return $centenas[$centena];
+            return $centenas[$centena] . ' ' . $this->numeroALetras($resto);
+        }
+        if ($numero < 1000000) {
+            $millar = (int)($numero / 1000);
+            $resto = $numero % 1000;
+            if ($millar == 1) {
+                if ($resto == 0) return 'MIL';
+                return 'MIL ' . $this->numeroALetras($resto);
+            }
+            if ($resto == 0) return $this->numeroALetras($millar) . ' MIL';
+            return $this->numeroALetras($millar) . ' MIL ' . $this->numeroALetras($resto);
+        }
+        return 'NÚMERO MUY GRANDE';
+    }
 }

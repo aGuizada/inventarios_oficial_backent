@@ -59,4 +59,9 @@ class Venta extends Model
     {
         return $this->hasOne(CreditoVenta::class);
     }
+
+    public function pagos()
+    {
+        return $this->hasMany(DetallePago::class);
+    }
 }

@@ -59,28 +59,44 @@ class Caja extends Model
     }
 
     /**
-     * Calcula el saldo disponible de la caja
+     * Calcula el saldo disponible de la caja basándose en ventas, compras y transacciones reales
      *
      * @return float
      */
     public function calcularSaldoDisponible()
     {
+        // Obtener ventas reales de la caja
+        $ventas = Venta::where('caja_id', $this->id)->sum('total');
+        
+        // Obtener compras reales de la caja
+        $comprasContado = CompraBase::where('caja_id', $this->id)
+            ->where(function($q) {
+                $q->where('tipo_compra', 'CONTADO')
+                  ->orWhere('tipo_compra', 'contado');
+            })
+            ->sum('total');
+        
+        $comprasCredito = CompraBase::where('caja_id', $this->id)
+            ->where(function($q) {
+                $q->where('tipo_compra', 'CREDITO')
+                  ->orWhere('tipo_compra', 'credito')
+                  ->orWhere('tipo_compra', 'CRÉDITO');
+            })
+            ->sum('total');
+        
+        // Obtener transacciones reales de la caja
+        $transacciones = TransaccionCaja::where('caja_id', $this->id)->get();
+        $entradas = $transacciones->where('transaccion', 'ingreso')->sum('importe');
+        $salidas = $transacciones->where('transaccion', 'egreso')->sum('importe');
+        
+        // Calcular saldo disponible basándose en valores reales
         $saldoInicial = (float) ($this->saldo_inicial ?? 0);
-        $depositos = (float) ($this->depositos ?? 0);
-        $ventas = (float) ($this->ventas ?? 0);
-        $pagosEfectivo = (float) ($this->pagos_efectivo ?? 0);
-        $pagosQr = (float) ($this->pagos_qr ?? 0);
-        $pagosTransferencia = (float) ($this->pagos_transferencia ?? 0);
-        $cuotasVentasCredito = (float) ($this->cuotas_ventas_credito ?? 0);
-        $salidas = (float) ($this->salidas ?? 0);
-        $comprasContado = (float) ($this->compras_contado ?? 0);
-        $comprasCredito = (float) ($this->compras_credito ?? 0);
         $saldoFaltante = (float) ($this->saldo_faltante ?? 0);
         
-        $saldoDisponible = $saldoInicial + $depositos + $ventas + $pagosEfectivo + $pagosQr + 
-                          $pagosTransferencia + $cuotasVentasCredito - $salidas - 
-                          $comprasContado - $comprasCredito - $saldoFaltante;
+        $saldoDisponible = $saldoInicial + $ventas + $entradas - 
+                          $comprasContado - $comprasCredito - $salidas - $saldoFaltante;
         
-        return $saldoDisponible;
+        // Asegurar que el saldo no sea negativo
+        return max(0, round($saldoDisponible, 2));
     }
 }
