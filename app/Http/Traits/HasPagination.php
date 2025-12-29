@@ -49,7 +49,16 @@ trait HasPagination
                             $q->orWhere($field, $search);
                         } else {
                             // Usar LIKE solo para campos de texto
-                            $q->orWhere($field, 'like', "%{$search}%");
+                            // Para campos que pueden ser NULL, usar COALESCE o manejar NULL explícitamente
+                            if ($field === 'codigo') {
+                                // Buscar por código (puede ser NULL), convertir a string si es numérico
+                                $q->orWhere(function($subQ) use ($search, $field) {
+                                    $subQ->where($field, 'like', "%{$search}%")
+                                         ->orWhereRaw("CAST({$field} AS CHAR) LIKE ?", ["%{$search}%"]);
+                                });
+                            } else {
+                                $q->orWhere($field, 'like', "%{$search}%");
+                            }
                         }
                     }
                 } catch (\Exception $e) {

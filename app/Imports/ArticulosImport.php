@@ -37,32 +37,50 @@ class ArticulosImport implements ToModel, WithHeadingRow, WithValidation, SkipsO
      */
     public function model(array $row)
     {
-        $this->importedCount++;
+        // Normalizar el código: convertir números a string, manejar null/vacío
+        $codigoRaw = $row['codigo'] ?? null;
+        $codigo = null;
+        
+        if ($codigoRaw !== null && $codigoRaw !== '') {
+            // Convertir a string y limpiar
+            $codigoTrimmed = trim((string)$codigoRaw);
+            if ($codigoTrimmed !== '') {
+                $codigo = $codigoTrimmed;
+            }
+        }
 
-        $existing = Articulo::where('codigo', $row['codigo'])->first();
+        // TEMPORAL: Para permitir códigos repetidos, NO buscamos artículos existentes
+        // Solo usamos $existing para valores por defecto si faltan datos
+        $existing = null;
+        
+        // Si no hay código, buscar por nombre para valores por defecto
+        if ($codigo === null && !empty($row['nombre'])) {
+            $existing = Articulo::where('nombre', $row['nombre'])->whereNull('codigo')->first();
+        }
 
-        $categoriaId = $this->resolveCategoriaId($row['categoria'] ?? null) ?? $existing?->categoria_id;
-        $proveedorId = $this->resolveProveedorId($row['proveedor'] ?? null) ?? $existing?->proveedor_id;
-        $marcaId = $this->resolveMarcaId($row['marca'] ?? null) ?? $existing?->marca_id;
-        $medidaId = $this->resolveMedidaId($row['medida'] ?? null) ?? $existing?->medida_id;
-        $industriaId = $this->resolveIndustriaId($row['industria'] ?? null) ?? $existing?->industria_id;
+        $categoriaId = $this->resolveCategoriaId($row['categoria'] ?? null) ?? ($existing ? $existing->categoria_id : null);
+        $proveedorId = $this->resolveProveedorId($row['proveedor'] ?? null) ?? ($existing ? $existing->proveedor_id : null);
+        $marcaId = $this->resolveMarcaId($row['marca'] ?? null) ?? ($existing ? $existing->marca_id : null);
+        $medidaId = $this->resolveMedidaId($row['medida'] ?? null) ?? ($existing ? $existing->medida_id : null);
+        $industriaId = $this->resolveIndustriaId($row['industria'] ?? null) ?? ($existing ? $existing->industria_id : null);
 
-        $unidadEnvase = $this->parseInteger($row['unidad_envase'] ?? null) ?? ($existing?->unidad_envase ?? 1);
-        $precioCostoUnid = $this->parseNumeric($row['precio_costo_unid'] ?? null) ?? ($existing?->precio_costo_unid ?? 0);
-        $precioCostoPaq = $this->parseNumeric($row['precio_costo_paq'] ?? null) ?? ($existing?->precio_costo_paq ?? $precioCostoUnid);
-        $precioVenta = $this->parseNumeric($row['precio_venta'] ?? null) ?? ($existing?->precio_venta ?? 0);
-        $precioUno = $this->parseNumeric($row['precio_uno'] ?? null) ?? $existing?->precio_uno;
-        $precioDos = $this->parseNumeric($row['precio_dos'] ?? null) ?? $existing?->precio_dos;
-        $precioTres = $this->parseNumeric($row['precio_tres'] ?? null) ?? $existing?->precio_tres;
-        $precioCuatro = $this->parseNumeric($row['precio_cuatro'] ?? null) ?? $existing?->precio_cuatro;
-        $stock = $this->parseInteger($row['stock'] ?? null) ?? ($existing?->stock ?? 0);
-        $costoCompra = $this->parseNumeric($row['costo_compra'] ?? null) ?? ($existing?->costo_compra ?? $precioCostoUnid);
-        $vencimiento = $this->parseInteger($row['vencimiento'] ?? null) ?? $existing?->vencimiento;
+        $unidadEnvase = $this->parseInteger($row['unidad_envase'] ?? null) ?? ($existing ? $existing->unidad_envase : 1);
+        $precioCostoUnid = $this->parseNumeric($row['precio_costo_unid'] ?? null) ?? ($existing ? $existing->precio_costo_unid : 0);
+        $precioCostoPaq = $this->parseNumeric($row['precio_costo_paq'] ?? null) ?? ($existing ? $existing->precio_costo_paq : $precioCostoUnid);
+        $precioVenta = $this->parseNumeric($row['precio_venta'] ?? null) ?? ($existing ? $existing->precio_venta : 0);
+        $precioUno = $this->parseNumeric($row['precio_uno'] ?? null) ?? ($existing ? $existing->precio_uno : null);
+        $precioDos = $this->parseNumeric($row['precio_dos'] ?? null) ?? ($existing ? $existing->precio_dos : null);
+        $precioTres = $this->parseNumeric($row['precio_tres'] ?? null) ?? ($existing ? $existing->precio_tres : null);
+        $precioCuatro = $this->parseNumeric($row['precio_cuatro'] ?? null) ?? ($existing ? $existing->precio_cuatro : null);
+        $stock = $this->parseInteger($row['stock'] ?? null) ?? ($existing ? $existing->stock : 0);
+        $costoCompra = $this->parseNumeric($row['costo_compra'] ?? null) ?? ($existing ? $existing->costo_compra : $precioCostoUnid);
+        $vencimiento = $this->parseInteger($row['vencimiento'] ?? null) ?? ($existing ? $existing->vencimiento : null);
    
-        $estado = $this->parseBoolean($row['estado'] ?? null, $existing?->estado ?? true) ? 1 : 0;
+        $estado = $this->parseBoolean($row['estado'] ?? null, $existing ? $existing->estado : true) ? 1 : 0;
 
         $data = [
             'nombre' => $row['nombre'],
+            'codigo' => $codigo, // Agregar el código normalizado (puede ser null)
             'categoria_id' => $categoriaId,
             'proveedor_id' => $proveedorId,
             'medida_id' => $medidaId,
@@ -77,16 +95,30 @@ class ArticulosImport implements ToModel, WithHeadingRow, WithValidation, SkipsO
             'precio_tres' => $precioTres,
             'precio_cuatro' => $precioCuatro,
             'stock' => $stock,
-            'descripcion' => $row['descripcion'] ?? $existing?->descripcion,
+            'descripcion' => $row['descripcion'] ?? ($existing ? $existing->descripcion : null),
             'costo_compra' => $costoCompra,
             'vencimiento' => $vencimiento,
             'estado' => $estado,
         ];
 
-        $articulo = Articulo::updateOrCreate(
-            ['codigo' => $row['codigo']],
-            $data
-        );
+        // TEMPORAL: Permitir códigos repetidos para importación masiva
+        // Siempre crear nuevo artículo (permite códigos repetidos)
+        // TODO: Revertir después de la importación para usar updateOrCreate
+        try {
+            // Siempre crear nuevo artículo (permite códigos repetidos temporalmente)
+            $articulo = Articulo::create($data);
+            
+            // Incrementar contador solo si se creó exitosamente
+            $this->importedCount++;
+        } catch (\Exception $e) {
+            \Log::error('Error al crear artículo en importación', [
+                'row' => $row,
+                'codigo' => $codigo,
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
+            ]);
+            throw $e;
+        }
 
         return $articulo;
     }
@@ -99,7 +131,7 @@ class ArticulosImport implements ToModel, WithHeadingRow, WithValidation, SkipsO
     public function rules(): array
     {
         return [
-            'codigo' => ['required', 'string', 'max:255'],
+            'codigo' => ['nullable',  'max:255'],
             'nombre' => ['required', 'string', 'max:255'],
             'categoria' => ['nullable', 'string', function ($attribute, $value, $fail) {
                 if ($this->normalizeValue($value) !== null && !$this->resolveCategoriaId($value)) {
@@ -139,8 +171,8 @@ class ArticulosImport implements ToModel, WithHeadingRow, WithValidation, SkipsO
             'costo_compra' => ['required', 'numeric', 'min:0'],
             'vencimiento' => ['nullable', 'integer', 'min:0'],
          
-            'estado' => ['required', 'string', function ($attribute, $value, $fail) {
-                if (!$this->isEstadoText($value)) {
+            'estado' => ['nullable', 'string', function ($attribute, $value, $fail) {
+                if ($this->normalizeValue($value) !== null && !$this->isEstadoText($value)) {
                     $fail('El estado debe ser Activo o Inactivo.');
                 }
             }],
@@ -155,13 +187,10 @@ class ArticulosImport implements ToModel, WithHeadingRow, WithValidation, SkipsO
     public function customValidationMessages()
     {
         return [
-            'codigo.required' => 'El código es obligatorio.',
             'nombre.required' => 'El nombre es obligatorio.',
             'precio_costo_unid.required' => 'El precio de costo por unidad es obligatorio.',
             'precio_venta.required' => 'El precio de venta es obligatorio.',
             'costo_compra.required' => 'El costo de compra es obligatorio.',
-            
-            'estado.required' => 'El estado es obligatorio.',
         ];
     }
 
@@ -453,6 +482,7 @@ class ArticulosImport implements ToModel, WithHeadingRow, WithValidation, SkipsO
             $this->proveedoresCache = Proveedor::all();
         }
 
-        return $this->proveedoresCache->first()?->id;
+        $proveedor = $this->proveedoresCache->first();
+        return $proveedor ? $proveedor->id : null;
     }
 }

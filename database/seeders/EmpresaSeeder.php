@@ -13,10 +13,10 @@ class EmpresaSeeder extends Seeder
     public function run(): void
     {
         DB::table('empresas')->insert([
-            'nombre' => 'Mi Empresa',
-            'direccion' => 'Av. Principal #123',
+            'nombre' => 'AUTOZONE ',
+            'direccion' => '',
             'telefono' => '12345678',
-            'email' => 'contacto@miempresa.com',
+            'email' => 'autozone@gmail.com',
             'nit' => '1234567890',
             'logo' => null,
             'created_at' => now(),

@@ -14,12 +14,12 @@ class SucursalSeeder extends Seeder
     {
         DB::table('sucursales')->insert([
             'empresa_id' => 1, // Asume que la empresa con ID 1 ya existe
-            'nombre' => 'Casa Matriz',
+            'nombre' => 'AUTOZONE',
             'codigoSucursal' => 1,
             'direccion' => 'Av. Principal #123',
-            'correo' => 'casamatriz@miempresa.com',
+            'correo' => 'autozone@autozone@gmain.com',
             'telefono' => '12345678',
-            'departamento' => 'La Paz',
+            'departamento' => 'cochabamba',
             'estado' => 1,
             'responsable' => 'Administrador',
             'created_at' => now(),

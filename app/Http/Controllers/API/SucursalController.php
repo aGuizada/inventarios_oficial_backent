@@ -121,7 +121,49 @@ class SucursalController extends Controller
         $sucursal = Sucursal::find($id);
 
         if (!$sucursal) {
-            return response()->json(['error' => 'Sucursal no encontrada'], 404);
+            return response()->json([
+                'success' => false,
+                'error' => 'Sucursal no encontrada'
+            ], 404);
+        }
+
+        // Validar si es la sucursal principal (generalmente la primera, ID 1)
+        if ($sucursal->id == 1) {
+            return response()->json([
+                'success' => false,
+                'error' => 'No se puede eliminar la sucursal principal del sistema',
+                'message' => 'La sucursal principal no puede ser eliminada por razones de integridad del sistema.'
+            ], 400);
+        }
+
+        // Validar si tiene usuarios asociados
+        $usuariosCount = $sucursal->users()->count();
+        if ($usuariosCount > 0) {
+            return response()->json([
+                'success' => false,
+                'error' => 'No se puede eliminar la sucursal',
+                'message' => "No se puede eliminar esta sucursal porque tiene {$usuariosCount} usuario(s) asociado(s). Por favor, reasigne o elimine los usuarios antes de eliminar la sucursal."
+            ], 400);
+        }
+
+        // Validar si tiene almacenes asociados
+        $almacenesCount = $sucursal->almacenes()->count();
+        if ($almacenesCount > 0) {
+            return response()->json([
+                'success' => false,
+                'error' => 'No se puede eliminar la sucursal',
+                'message' => "No se puede eliminar esta sucursal porque tiene {$almacenesCount} almacén(es) asociado(s). Por favor, elimine o reasigne los almacenes antes de eliminar la sucursal."
+            ], 400);
+        }
+
+        // Validar si tiene cajas asociadas
+        $cajasCount = $sucursal->cajas()->count();
+        if ($cajasCount > 0) {
+            return response()->json([
+                'success' => false,
+                'error' => 'No se puede eliminar la sucursal',
+                'message' => "No se puede eliminar esta sucursal porque tiene {$cajasCount} caja(s) asociada(s). Por favor, elimine o reasigne las cajas antes de eliminar la sucursal."
+            ], 400);
         }
 
         $sucursal->delete();

@@ -83,9 +83,9 @@
                     <td>{{ $articulo->codigo }}</td>
                     <td>{{ $articulo->nombre }}</td>
                     <td>{{ $articulo->categoria ? $articulo->categoria->nombre : 'N/A' }}</td>
-                    <td>{{ $articulo->marca ? ($articulo->marca->nombre ?? $articulo->marca->nombre_marca ?? 'N/A') : 'N/A' }}</td>
+                    <td>{{ $articulo->marca ? $articulo->marca->nombre : 'N/A' }}</td>
                     <td class="text-right">{{ number_format($articulo->precio_venta ?? 0, 2) }}</td>
-                    <td class="text-right">{{ $articulo->stock ?? 0 }}</td>
+                    <td class="text-right">{{ $articulo->inventarios ? $articulo->inventarios->sum('saldo_stock') : 0 }}</td>
                     <td>{{ $articulo->estado ? 'Activo' : 'Inactivo' }}</td>
                 </tr>
             @endforeach

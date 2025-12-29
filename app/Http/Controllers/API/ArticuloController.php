@@ -7,7 +7,6 @@ use App\Http\Traits\HasPagination;
 use App\Models\Articulo;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Storage;
-use Illuminate\Support\Facades\Log;
 use Maatwebsite\Excel\Excel as ExcelService;
 use App\Exports\ArticulosExport;
 use App\Imports\ArticulosImport;
@@ -20,6 +19,7 @@ class ArticuloController extends Controller
 
     public function index(Request $request)
     {
+        // Cargar TODOS los artículos sin filtrar por estado (mostrar todos sin excepción)
         $query = Articulo::with(['categoria', 'proveedor', 'medida', 'marca', 'industria']);
 
         // Campos buscables: código, nombre, descripción, categoría, marca, proveedor
@@ -42,8 +42,8 @@ class ArticuloController extends Controller
         // Aplicar ordenamiento
         $query = $this->applySorting($query, $request, $sortableFields, 'id', 'desc');
 
-        // Aplicar paginación
-        return $this->paginateResponse($query, $request, 15, 100);
+        // Aplicar paginación (aumentar límite máximo para catálogo)
+        return $this->paginateResponse($query, $request, 15, 2000);
     }
 
     public function store(Request $request)
@@ -257,17 +257,9 @@ class ArticuloController extends Controller
      */
     public function exportPDF()
     {
-        try {
-            $articulos = Articulo::with(['categoria', 'marca', 'medida', 'industria', 'inventarios'])->get();
-            $pdf = Pdf::loadView('pdf.articulos', compact('articulos'));
-            $pdf->setPaper('a4', 'landscape');
-            return $pdf->download('articulos.pdf');
-        } catch (\Exception $e) {
-            Log::error('Error al generar PDF de artículos: ' . $e->getMessage());
-            return response()->json([
-                'message' => 'Error al generar el PDF',
-                'error' => $e->getMessage()
-            ], 500);
-        }
+        $articulos = Articulo::with(['categoria', 'marca', 'medida', 'industria', 'inventarios'])->get();
+        $pdf = Pdf::loadView('pdf.articulos', compact('articulos'));
+        $pdf->setPaper('a4', 'landscape');
+        return $pdf->download('articulos.pdf');
     }
 }

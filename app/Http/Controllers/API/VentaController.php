@@ -135,6 +135,7 @@ class VentaController extends Controller
 
     /**
      * Obtener productos disponibles en inventario (con stock > 0)
+     * Solo muestra productos con stock disponible mayor a 0
      */
     public function productosInventario(Request $request)
     {
@@ -150,7 +151,8 @@ class VentaController extends Controller
             'almacen'
         ]);
 
-        // Si no se solicita incluir sin stock, solo mostrar con stock > 0
+        // Por defecto, solo mostrar productos con stock > 0
+        // Solo incluir sin stock si se solicita explícitamente
         if (!$incluirSinStock) {
             $query->where('saldo_stock', '>', 0);
         }
@@ -160,6 +162,14 @@ class VentaController extends Controller
         }
 
         $inventarios = $query->get();
+        
+        // Filtrar adicionalmente para asegurar que solo se devuelvan productos con stock > 0
+        // (por si acaso hay algún registro con stock negativo o cero que pasó el filtro)
+        if (!$incluirSinStock) {
+            $inventarios = $inventarios->filter(function ($inventario) {
+                return ($inventario->saldo_stock ?? 0) > 0;
+            });
+        }
 
         // Formatear respuesta con información del artículo y stock disponible
         $productos = $inventarios->map(function ($inventario) {
@@ -294,6 +304,9 @@ class VentaController extends Controller
 
                 // Validar que el stock disponible sea suficiente
                 $stockDisponible = $inventario->saldo_stock ?? 0;
+                
+                // Permitir vender hasta que el stock llegue a 0
+                // Solo validar que el stock disponible sea suficiente para la cantidad a deducir
                 if ($stockDisponible < $cantidadDeducir) {
                     DB::rollBack();
                     return response()->json([
@@ -301,20 +314,6 @@ class VentaController extends Controller
                         'errors' => [
                             "detalles.{$index}.cantidad" => [
                                 "Stock insuficiente. Disponible: {$stockDisponible} (Unidades). Solicitado: {$cantidadDeducir} (Unidades) para {$cantidadVenta} {$unidadMedida}(s).",
-                                "Artículo: " . ($articulo ? $articulo->nombre : "ID {$articuloId}")
-                            ]
-                        ]
-                    ], 422);
-                }
-                
-                // Validar también que el stock no sea negativo o cero cuando se intenta vender
-                if ($stockDisponible <= 0) {
-                    DB::rollBack();
-                    return response()->json([
-                        'message' => 'Error de validación',
-                        'errors' => [
-                            "detalles.{$index}.cantidad" => [
-                                "El artículo no tiene stock disponible. Stock actual: {$stockDisponible}",
                                 "Artículo: " . ($articulo ? $articulo->nombre : "ID {$articuloId}")
                             ]
                         ]
