@@ -236,11 +236,27 @@ class TraspasoController extends Controller
             foreach ($traspaso->detalles as $detalle) {
                 $inventarioOrigen = Inventario::find($detalle->inventario_origen_id);
                 
-                // Descontar cantidad
-                $inventarioOrigen->saldo_stock -= $detalle->cantidad_solicitada;
+                if (!$inventarioOrigen) {
+                    DB::rollBack();
+                    return response()->json([
+                        'error' => "El inventario origen del artículo {$detalle->articulo_id} no existe"
+                    ], 400);
+                }
+                
+                // Descontar cantidad y saldo_stock del inventario origen
+                $cantidadADescontar = $detalle->cantidad_solicitada;
+                
+                $inventarioOrigen->cantidad -= $cantidadADescontar;
+                $inventarioOrigen->saldo_stock -= $cantidadADescontar;
+                
+                // Asegurar que no queden valores negativos
+                if ($inventarioOrigen->cantidad < 0) {
+                    $inventarioOrigen->cantidad = 0;
+                }
                 if ($inventarioOrigen->saldo_stock < 0) {
                     $inventarioOrigen->saldo_stock = 0;
                 }
+                
                 $inventarioOrigen->save();
 
                 // Actualizar detalle

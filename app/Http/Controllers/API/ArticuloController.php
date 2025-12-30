@@ -22,15 +22,10 @@ class ArticuloController extends Controller
         // Cargar TODOS los artículos sin filtrar por estado (mostrar todos sin excepción)
         $query = Articulo::with(['categoria', 'proveedor', 'medida', 'marca', 'industria']);
 
-        // Campos buscables: código, nombre, descripción, categoría, marca, proveedor
+        // Campos buscables: solo código y nombre del artículo
         $searchableFields = [
             'codigo',
-            'nombre',
-            'descripcion',
-            'categoria.nombre',
-            'marca.nombre',
-            'proveedor.nombre',
-            'industria.nombre'
+            'nombre'
         ];
 
         // Aplicar búsqueda
@@ -106,31 +101,113 @@ class ArticuloController extends Controller
     public function update(Request $request, Articulo $articulo)
     {
         try {
-            $request->validate([
-                'categoria_id' => 'required|exists:categorias,id',
-                'proveedor_id' => 'required|exists:proveedores,id',
-                'medida_id' => 'required|exists:medidas,id',
-                'marca_id' => 'required|exists:marcas,id',
-                'industria_id' => 'required|exists:industrias,id',
-                'codigo' => 'required|string|max:255|unique:articulos,codigo,' . $articulo->id,
-                'nombre' => 'required|string|max:255',
-                'unidad_envase' => 'required|integer',
-                'precio_costo_unid' => 'required|numeric',
-                'precio_costo_paq' => 'required|numeric',
-                'precio_venta' => 'required|numeric',
-                'precio_uno' => 'nullable|numeric',
-                'precio_dos' => 'nullable|numeric',
-                'precio_tres' => 'nullable|numeric',
-                'precio_cuatro' => 'nullable|numeric',
-                'stock' => 'required|integer',
-                'descripcion' => 'nullable|string|max:256',
-                'costo_compra' => 'required|numeric',
-                'vencimiento' => 'nullable|integer',
-                'fotografia' => 'nullable|image|mimes:jpeg,png,jpg,gif|max:2048',
-                'estado' => 'boolean',
+            // Obtener todos los datos del request
+            $allData = $request->all();
+            
+            // Validación flexible: solo validar campos que vienen en la petición y no son null
+            $rules = [];
+            
+            if (isset($allData['categoria_id']) && $allData['categoria_id'] !== null && $allData['categoria_id'] !== '') {
+                $rules['categoria_id'] = 'required|integer|exists:categorias,id';
+            }
+            if (isset($allData['proveedor_id']) && $allData['proveedor_id'] !== null && $allData['proveedor_id'] !== '') {
+                $rules['proveedor_id'] = 'required|integer|exists:proveedores,id';
+            }
+            if (isset($allData['medida_id']) && $allData['medida_id'] !== null && $allData['medida_id'] !== '') {
+                $rules['medida_id'] = 'required|integer|exists:medidas,id';
+            }
+            if (isset($allData['marca_id']) && $allData['marca_id'] !== null && $allData['marca_id'] !== '') {
+                $rules['marca_id'] = 'required|integer|exists:marcas,id';
+            }
+            if (isset($allData['industria_id']) && $allData['industria_id'] !== null && $allData['industria_id'] !== '') {
+                $rules['industria_id'] = 'required|integer|exists:industrias,id';
+            }
+            if (isset($allData['codigo'])) {
+                // Si el código viene como null o vacío, permitirlo (puede ser nullable)
+                if ($allData['codigo'] === null || $allData['codigo'] === '') {
+                    $rules['codigo'] = 'nullable|string|max:255';
+                } else {
+                    $rules['codigo'] = 'required|string|max:255|unique:articulos,codigo,' . $articulo->id;
+                }
+            }
+            if (isset($allData['nombre']) && $allData['nombre'] !== null) {
+                $rules['nombre'] = 'required|string|max:255';
+            }
+            if (isset($allData['unidad_envase'])) {
+                $rules['unidad_envase'] = 'nullable|integer';
+            }
+            if (isset($allData['precio_costo_unid'])) {
+                $rules['precio_costo_unid'] = 'nullable|numeric';
+            }
+            if (isset($allData['precio_costo_paq'])) {
+                $rules['precio_costo_paq'] = 'nullable|numeric';
+            }
+            if (isset($allData['precio_venta'])) {
+                $rules['precio_venta'] = 'nullable|numeric';
+            }
+            if (isset($allData['precio_uno'])) {
+                $rules['precio_uno'] = 'nullable|numeric';
+            }
+            if (isset($allData['precio_dos'])) {
+                $rules['precio_dos'] = 'nullable|numeric';
+            }
+            if (isset($allData['precio_tres'])) {
+                $rules['precio_tres'] = 'nullable|numeric';
+            }
+            if (isset($allData['precio_cuatro'])) {
+                $rules['precio_cuatro'] = 'nullable|numeric';
+            }
+            if (isset($allData['stock'])) {
+                $rules['stock'] = 'nullable|integer';
+            }
+            if (isset($allData['descripcion'])) {
+                $rules['descripcion'] = 'nullable|string|max:256';
+            }
+            if (isset($allData['costo_compra'])) {
+                $rules['costo_compra'] = 'nullable|numeric';
+            }
+            if (isset($allData['vencimiento'])) {
+                $rules['vencimiento'] = 'nullable|integer';
+            }
+            if ($request->hasFile('fotografia')) {
+                $rules['fotografia'] = 'nullable|image|mimes:jpeg,png,jpg,gif|max:2048';
+            }
+            if (isset($allData['estado'])) {
+                $rules['estado'] = 'nullable|boolean';
+            }
+
+            if (!empty($rules)) {
+                $request->validate($rules);
+            }
+
+            $data = $request->only([
+                'categoria_id', 'proveedor_id', 'medida_id', 'marca_id', 'industria_id',
+                'codigo', 'nombre', 'unidad_envase', 'precio_costo_unid', 'precio_costo_paq',
+                'precio_venta', 'precio_uno', 'precio_dos', 'precio_tres', 'precio_cuatro',
+                'stock', 'descripcion', 'costo_compra', 'vencimiento', 'estado'
             ]);
 
-            $data = $request->all();
+            // Convertir valores numéricos a los tipos correctos
+            $numericFields = ['categoria_id', 'proveedor_id', 'medida_id', 'marca_id', 'industria_id', 
+                              'unidad_envase', 'stock', 'vencimiento'];
+            foreach ($numericFields as $field) {
+                if (isset($data[$field]) && $data[$field] !== null && $data[$field] !== '') {
+                    $data[$field] = (int)$data[$field];
+                }
+            }
+
+            $decimalFields = ['precio_costo_unid', 'precio_costo_paq', 'precio_venta', 
+                             'precio_uno', 'precio_dos', 'precio_tres', 'precio_cuatro', 'costo_compra'];
+            foreach ($decimalFields as $field) {
+                if (isset($data[$field]) && $data[$field] !== null && $data[$field] !== '') {
+                    $data[$field] = (float)$data[$field];
+                }
+            }
+
+            // Filtrar valores null para no sobrescribir con null, pero mantener 0 y false
+            $data = array_filter($data, function($value) {
+                return $value !== null;
+            });
 
             if ($request->hasFile('fotografia')) {
                 if ($articulo->fotografia) {
@@ -144,12 +221,27 @@ class ArticuloController extends Controller
             $articulo->load(['categoria', 'proveedor', 'medida', 'marca', 'industria']);
 
             return response()->json($articulo);
-        } catch (ValidationException $e) {
+        } catch (\Illuminate\Validation\ValidationException $e) {
+            \Log::error('Error de validación al actualizar artículo', [
+                'articulo_id' => $articulo->id,
+                'errors' => $e->errors(),
+                'request_data' => $request->all(),
+                'request_keys' => array_keys($request->all())
+            ]);
             return response()->json([
                 'message' => 'Error de validación',
-                'errors' => $e->errors()
+                'errors' => $e->errors(),
+                'request_keys' => array_keys($request->all())
             ], 422);
         } catch (\Exception $e) {
+            \Log::error('Error al actualizar artículo', [
+                'articulo_id' => $articulo->id,
+                'message' => $e->getMessage(),
+                'file' => $e->getFile(),
+                'line' => $e->getLine(),
+                'trace' => $e->getTraceAsString(),
+                'request_data' => $request->all()
+            ]);
             return response()->json([
                 'message' => 'Error al actualizar el artículo',
                 'error' => $e->getMessage()

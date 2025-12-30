@@ -21,7 +21,11 @@ trait HasPagination
             return $query;
         }
         
-        return $query->where(function($q) use ($search, $searchableFields) {
+        // Normalizar búsqueda: convertir a minúsculas y escapar caracteres especiales
+        $searchNormalized = mb_strtolower($search, 'UTF-8');
+        $searchEscaped = addcslashes($search, '%_');
+        
+        return $query->where(function($q) use ($search, $searchNormalized, $searchEscaped, $searchableFields) {
             foreach ($searchableFields as $field) {
                 try {
                     if (strpos($field, '.') !== false) {
@@ -38,8 +42,9 @@ trait HasPagination
                                 });
                             }
                         } else {
-                            $q->orWhereHas($relation, function($subQ) use ($search, $relationField) {
-                                $subQ->where($relationField, 'like', "%{$search}%");
+                            // Búsqueda case-insensitive en relaciones
+                            $q->orWhereHas($relation, function($subQ) use ($searchEscaped, $relationField) {
+                                $subQ->whereRaw("LOWER({$relationField}) LIKE ?", ["%" . mb_strtolower($searchEscaped, 'UTF-8') . "%"]);
                             });
                         }
                     } else {
@@ -48,16 +53,16 @@ trait HasPagination
                         if (in_array($field, ['id']) && is_numeric($search)) {
                             $q->orWhere($field, $search);
                         } else {
-                            // Usar LIKE solo para campos de texto
-                            // Para campos que pueden ser NULL, usar COALESCE o manejar NULL explícitamente
+                            // Usar LIKE case-insensitive para campos de texto
                             if ($field === 'codigo') {
-                                // Buscar por código (puede ser NULL), convertir a string si es numérico
-                                $q->orWhere(function($subQ) use ($search, $field) {
-                                    $subQ->where($field, 'like', "%{$search}%")
-                                         ->orWhereRaw("CAST({$field} AS CHAR) LIKE ?", ["%{$search}%"]);
+                                // Buscar por código (puede ser NULL), búsqueda case-insensitive
+                                $q->orWhere(function($subQ) use ($searchEscaped, $field) {
+                                    $subQ->whereRaw("LOWER(CAST({$field} AS CHAR)) LIKE ?", ["%" . mb_strtolower($searchEscaped, 'UTF-8') . "%"])
+                                         ->orWhereRaw("LOWER({$field}) LIKE ?", ["%" . mb_strtolower($searchEscaped, 'UTF-8') . "%"]);
                                 });
                             } else {
-                                $q->orWhere($field, 'like', "%{$search}%");
+                                // Búsqueda case-insensitive para otros campos de texto
+                                $q->orWhereRaw("LOWER({$field}) LIKE ?", ["%" . mb_strtolower($searchEscaped, 'UTF-8') . "%"]);
                             }
                         }
                     }

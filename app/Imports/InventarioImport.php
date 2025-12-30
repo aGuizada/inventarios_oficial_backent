@@ -5,6 +5,11 @@ namespace App\Imports;
 use App\Models\Inventario;
 use App\Models\Articulo;
 use App\Models\Almacen;
+use App\Models\Categoria;
+use App\Models\Proveedor;
+use App\Models\Medida;
+use App\Models\Marca;
+use App\Models\Industria;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
 use Maatwebsite\Excel\Concerns\ToModel;
@@ -20,6 +25,11 @@ class InventarioImport implements ToModel, WithHeadingRow, WithValidation, Skips
     use SkipsErrors, SkipsFailures;
 
     protected $importedCount = 0;
+    protected static $defaultCategoriaId = null;
+    protected static $defaultProveedorId = null;
+    protected static $defaultMedidaId = null;
+    protected static $defaultMarcaId = null;
+    protected static $defaultIndustriaId = null;
 
     public function model(array $row)
     {
@@ -58,16 +68,23 @@ class InventarioImport implements ToModel, WithHeadingRow, WithValidation, Skips
             $articulo = Articulo::create([
                 'codigo' => $codigoArticulo,
                 'nombre' => $nombreArticulo,
-                'categoria_id' => null,
-                'proveedor_id' => null,
-                'medida_id' => null,
-                'marca_id' => null,
-                'industria_id' => null,
+                'categoria_id' => $this->getDefaultCategoriaId(),
+                'proveedor_id' => $this->getDefaultProveedorId(),
+                'medida_id' => $this->getDefaultMedidaId(),
+                'marca_id' => $this->getDefaultMarcaId(),
+                'industria_id' => $this->getDefaultIndustriaId(),
                 'unidad_envase' => 1,
                 'precio_costo_unid' => 0,
                 'precio_costo_paq' => 0,
                 'precio_venta' => 0,
+                'precio_uno' => null,
+                'precio_dos' => null,
+                'precio_tres' => null,
+                'precio_cuatro' => null,
                 'stock' => 0,
+                'descripcion' => null,
+                'costo_compra' => 0, // Campo requerido
+                'vencimiento' => null,
                 'estado' => 1
             ]);
         }
@@ -89,7 +106,7 @@ class InventarioImport implements ToModel, WithHeadingRow, WithValidation, Skips
 
         $almacen = Almacen::firstOrCreate([
             'nombre_almacen' => $almacenNombre,
-            'sucursal_id' => $sucursal?->id,
+            'sucursal_id' => $sucursal ? $sucursal->id : null,
         ]);
 
         // Normalizar cantidad y saldo_stock (pueden venir como string, número o vacío)
@@ -223,5 +240,102 @@ class InventarioImport implements ToModel, WithHeadingRow, WithValidation, Skips
     public function getSkippedCount(): int
     {
         return count($this->failures());
+    }
+
+    /**
+     * Obtener el ID de la categoría por defecto (primera categoría disponible)
+     */
+    protected function getDefaultCategoriaId(): int
+    {
+        if (self::$defaultCategoriaId === null) {
+            $categoria = Categoria::orderBy('id')->first();
+            if (!$categoria) {
+                // Si no hay categorías, crear una por defecto
+                $categoria = Categoria::create([
+                    'nombre' => 'General',
+                    'descripcion' => 'Categoría por defecto para importación'
+                ]);
+            }
+            self::$defaultCategoriaId = $categoria->id;
+        }
+        return self::$defaultCategoriaId;
+    }
+
+    /**
+     * Obtener el ID del proveedor por defecto (primer proveedor disponible)
+     */
+    protected function getDefaultProveedorId(): int
+    {
+        if (self::$defaultProveedorId === null) {
+            $proveedor = Proveedor::orderBy('id')->first();
+            if (!$proveedor) {
+                // Si no hay proveedores, crear uno por defecto
+                $proveedor = Proveedor::create([
+                    'nombre' => 'Proveedor General',
+                    'contacto' => 'N/A',
+                    'telefono' => 'N/A',
+                    'email' => 'n/a@example.com'
+                ]);
+            }
+            self::$defaultProveedorId = $proveedor->id;
+        }
+        return self::$defaultProveedorId;
+    }
+
+    /**
+     * Obtener el ID de la medida por defecto (primera medida disponible)
+     */
+    protected function getDefaultMedidaId(): int
+    {
+        if (self::$defaultMedidaId === null) {
+            $medida = Medida::orderBy('id')->first();
+            if (!$medida) {
+                // Si no hay medidas, crear una por defecto
+                $medida = Medida::create([
+                    'nombre' => 'Unidad',
+                    'abreviatura' => 'UND'
+                ]);
+            }
+            self::$defaultMedidaId = $medida->id;
+        }
+        return self::$defaultMedidaId;
+    }
+
+    /**
+     * Obtener el ID de la marca por defecto (primera marca disponible)
+     */
+    protected function getDefaultMarcaId(): int
+    {
+        if (self::$defaultMarcaId === null) {
+            $marca = Marca::orderBy('id')->first();
+            if (!$marca) {
+                // Si no hay marcas, crear una por defecto
+                $marca = Marca::create([
+                    'nombre' => 'Genérica',
+                    'descripcion' => 'Marca por defecto para importación'
+                ]);
+            }
+            self::$defaultMarcaId = $marca->id;
+        }
+        return self::$defaultMarcaId;
+    }
+
+    /**
+     * Obtener el ID de la industria por defecto (primera industria disponible)
+     */
+    protected function getDefaultIndustriaId(): int
+    {
+        if (self::$defaultIndustriaId === null) {
+            $industria = Industria::orderBy('id')->first();
+            if (!$industria) {
+                // Si no hay industrias, crear una por defecto
+                $industria = Industria::create([
+                    'nombre' => 'General',
+                    'descripcion' => 'Industria por defecto para importación'
+                ]);
+            }
+            self::$defaultIndustriaId = $industria->id;
+        }
+        return self::$defaultIndustriaId;
     }
 }
