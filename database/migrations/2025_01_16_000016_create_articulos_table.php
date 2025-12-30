@@ -14,7 +14,7 @@ return new class extends Migration {
             $table->integer('medida_id')->unsigned();
             $table->integer('marca_id')->unsigned();
             $table->integer('industria_id')->unsigned();
-            $table->string('codigo', 255);
+            $table->string('codigo', 255)->nullable();
             $table->string('nombre', 255);
             $table->integer('unidad_envase');
             $table->decimal('precio_costo_unid', 15, 4);

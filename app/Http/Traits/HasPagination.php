@@ -20,30 +20,30 @@ trait HasPagination
         if (empty($search)) {
             return $query;
         }
-        
+
         // Normalizar búsqueda: convertir a minúsculas y escapar caracteres especiales
         $searchNormalized = mb_strtolower($search, 'UTF-8');
         $searchEscaped = addcslashes($search, '%_');
-        
-        return $query->where(function($q) use ($search, $searchNormalized, $searchEscaped, $searchableFields) {
+
+        return $query->where(function ($q) use ($search, $searchNormalized, $searchEscaped, $searchableFields) {
             foreach ($searchableFields as $field) {
                 try {
                     if (strpos($field, '.') !== false) {
-                        // Relación: campo.relacion.campo
+                        // Relación: relacion.campo o relacion.subrelacion.campo
                         $parts = explode('.', $field);
-                        $relation = $parts[0];
-                        $relationField = $parts[1];
-                        
+                        $relationField = array_pop($parts); // El último es el campo
+                        $relationPath = implode('.', $parts); // El resto es la ruta de la relación
+
                         // Verificar si es un campo numérico en la relación
                         if (in_array($relationField, ['id'])) {
                             if (is_numeric($search)) {
-                                $q->orWhereHas($relation, function($subQ) use ($search, $relationField) {
+                                $q->orWhereHas($relationPath, function ($subQ) use ($search, $relationField) {
                                     $subQ->where($relationField, $search);
                                 });
                             }
                         } else {
                             // Búsqueda case-insensitive en relaciones
-                            $q->orWhereHas($relation, function($subQ) use ($searchEscaped, $relationField) {
+                            $q->orWhereHas($relationPath, function ($subQ) use ($searchEscaped, $relationField) {
                                 $subQ->whereRaw("LOWER({$relationField}) LIKE ?", ["%" . mb_strtolower($searchEscaped, 'UTF-8') . "%"]);
                             });
                         }
@@ -56,9 +56,9 @@ trait HasPagination
                             // Usar LIKE case-insensitive para campos de texto
                             if ($field === 'codigo') {
                                 // Buscar por código (puede ser NULL), búsqueda case-insensitive
-                                $q->orWhere(function($subQ) use ($searchEscaped, $field) {
+                                $q->orWhere(function ($subQ) use ($searchEscaped, $field) {
                                     $subQ->whereRaw("LOWER(CAST({$field} AS CHAR)) LIKE ?", ["%" . mb_strtolower($searchEscaped, 'UTF-8') . "%"])
-                                         ->orWhereRaw("LOWER({$field}) LIKE ?", ["%" . mb_strtolower($searchEscaped, 'UTF-8') . "%"]);
+                                        ->orWhereRaw("LOWER({$field}) LIKE ?", ["%" . mb_strtolower($searchEscaped, 'UTF-8') . "%"]);
                                 });
                             } else {
                                 // Búsqueda case-insensitive para otros campos de texto
@@ -82,17 +82,17 @@ trait HasPagination
     {
         $sortBy = $request->get('sort_by', $defaultSort);
         $sortOrder = $request->get('sort_order', $defaultOrder);
-        
+
         // Validar campos ordenables si se proporcionan
         if (!empty($sortableFields) && !in_array($sortBy, $sortableFields)) {
             $sortBy = $defaultSort;
         }
-        
+
         // Validar orden
         if (!in_array(strtolower($sortOrder), ['asc', 'desc'])) {
             $sortOrder = $defaultOrder;
         }
-        
+
         return $query->orderBy($sortBy, $sortOrder);
     }
 
@@ -103,11 +103,11 @@ trait HasPagination
     {
         try {
             if ($request->has('per_page') || $request->has('page')) {
-                $perPage = min((int)$request->get('per_page', $defaultPerPage), $maxPerPage);
+                $perPage = min((int) $request->get('per_page', $defaultPerPage), $maxPerPage);
                 $perPage = max(1, $perPage); // Asegurar que sea al menos 1
-                
+
                 $paginated = $query->paginate($perPage);
-                
+
                 return response()->json([
                     'success' => true,
                     'data' => [
@@ -121,7 +121,7 @@ trait HasPagination
                     ]
                 ]);
             }
-            
+
             // Sin paginación (compatibilidad)
             $items = $query->get();
             return response()->json(['data' => $items]);
@@ -132,7 +132,7 @@ trait HasPagination
                 'line' => $e->getLine(),
                 'trace' => $e->getTraceAsString()
             ]);
-            
+
             throw $e; // Re-lanzar para que el controlador lo maneje
         }
     }

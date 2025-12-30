@@ -12,6 +12,10 @@ use App\Exports\ArticulosExport;
 use App\Imports\ArticulosImport;
 use Barryvdh\DomPDF\Facade\Pdf;
 use Maatwebsite\Excel\Facades\Excel;
+use Intervention\Image\ImageManager;
+use Intervention\Image\Drivers\Gd\Driver;
+use Illuminate\Validation\ValidationException;
+use Illuminate\Validation\Rule;
 
 class ArticuloController extends Controller
 {
@@ -37,20 +41,30 @@ class ArticuloController extends Controller
         // Aplicar ordenamiento
         $query = $this->applySorting($query, $request, $sortableFields, 'id', 'desc');
 
-        // Aplicar paginación (aumentar límite máximo para catálogo)
-        return $this->paginateResponse($query, $request, 15, 2000);
+        // Aplicar paginación (sin límite máximo para catálogo)
+        return $this->paginateResponse($query, $request, 15, 999999);
     }
 
     public function store(Request $request)
     {
         try {
+            // Normalizar código antes de validar: si es string vacío o la palabra "null", convertir a null real
+            if ($request->has('codigo') && ($request->codigo === '' || $request->codigo === null || $request->codigo === 'null')) {
+                $request->merge(['codigo' => null]);
+            }
+
             $request->validate([
                 'categoria_id' => 'required|exists:categorias,id',
                 'proveedor_id' => 'required|exists:proveedores,id',
                 'medida_id' => 'required|exists:medidas,id',
                 'marca_id' => 'required|exists:marcas,id',
                 'industria_id' => 'required|exists:industrias,id',
-                'codigo' => 'required|string|max:255|unique:articulos',
+                'codigo' => [
+                    'nullable',
+                    'string',
+                    'max:255',
+                    Rule::unique('articulos', 'codigo')->whereNotNull('codigo')
+                ],
                 'nombre' => 'required|string|max:255',
                 'unidad_envase' => 'required|integer',
                 'precio_costo_unid' => 'required|numeric',
@@ -71,7 +85,24 @@ class ArticuloController extends Controller
             $data = $request->all();
 
             if ($request->hasFile('fotografia')) {
-                $path = $request->file('fotografia')->store('articulos', 'public');
+                $file = $request->file('fotografia');
+
+                // Optimizar imagen con Intervention Image
+                $manager = new ImageManager(new Driver());
+                $image = $manager->read($file);
+
+                // Redimensionar para cards (300px es el mínimo recomendado para nitidez básica)
+                if ($image->width() > 300) {
+                    $image->scale(width: 300);
+                }
+
+                // Convertir a WebP con compresión alta (calidad 50)
+                $encoded = $image->toWebp(20);
+
+                $filename = pathinfo($file->getClientOriginalName(), PATHINFO_FILENAME) . '_' . time() . '.webp';
+                $path = 'articulos/' . $filename;
+
+                Storage::disk('public')->put($path, $encoded);
                 $data['fotografia'] = $path;
             }
 
@@ -101,12 +132,17 @@ class ArticuloController extends Controller
     public function update(Request $request, Articulo $articulo)
     {
         try {
+            // Normalizar código antes de validar: si es string vacío o la palabra "null", convertir a null real
+            if ($request->has('codigo') && ($request->codigo === '' || $request->codigo === null || $request->codigo === 'null')) {
+                $request->merge(['codigo' => null]);
+            }
+
             // Obtener todos los datos del request
             $allData = $request->all();
-            
+
             // Validación flexible: solo validar campos que vienen en la petición y no son null
             $rules = [];
-            
+
             if (isset($allData['categoria_id']) && $allData['categoria_id'] !== null && $allData['categoria_id'] !== '') {
                 $rules['categoria_id'] = 'required|integer|exists:categorias,id';
             }
@@ -122,13 +158,13 @@ class ArticuloController extends Controller
             if (isset($allData['industria_id']) && $allData['industria_id'] !== null && $allData['industria_id'] !== '') {
                 $rules['industria_id'] = 'required|integer|exists:industrias,id';
             }
-            if (isset($allData['codigo'])) {
-                // Si el código viene como null o vacío, permitirlo (puede ser nullable)
-                if ($allData['codigo'] === null || $allData['codigo'] === '') {
-                    $rules['codigo'] = 'nullable|string|max:255';
-                } else {
-                    $rules['codigo'] = 'required|string|max:255|unique:articulos,codigo,' . $articulo->id;
-                }
+            if (array_key_exists('codigo', $allData)) {
+                $rules['codigo'] = [
+                    'nullable',
+                    'string',
+                    'max:255',
+                    Rule::unique('articulos', 'codigo')->ignore($articulo->id)->whereNotNull('codigo')
+                ];
             }
             if (isset($allData['nombre']) && $allData['nombre'] !== null) {
                 $rules['nombre'] = 'required|string|max:255';
@@ -181,39 +217,88 @@ class ArticuloController extends Controller
             }
 
             $data = $request->only([
-                'categoria_id', 'proveedor_id', 'medida_id', 'marca_id', 'industria_id',
-                'codigo', 'nombre', 'unidad_envase', 'precio_costo_unid', 'precio_costo_paq',
-                'precio_venta', 'precio_uno', 'precio_dos', 'precio_tres', 'precio_cuatro',
-                'stock', 'descripcion', 'costo_compra', 'vencimiento', 'estado'
+                'categoria_id',
+                'proveedor_id',
+                'medida_id',
+                'marca_id',
+                'industria_id',
+                'codigo',
+                'nombre',
+                'unidad_envase',
+                'precio_costo_unid',
+                'precio_costo_paq',
+                'precio_venta',
+                'precio_uno',
+                'precio_dos',
+                'precio_tres',
+                'precio_cuatro',
+                'stock',
+                'descripcion',
+                'costo_compra',
+                'vencimiento',
+                'estado'
             ]);
 
             // Convertir valores numéricos a los tipos correctos
-            $numericFields = ['categoria_id', 'proveedor_id', 'medida_id', 'marca_id', 'industria_id', 
-                              'unidad_envase', 'stock', 'vencimiento'];
+            $numericFields = [
+                'categoria_id',
+                'proveedor_id',
+                'medida_id',
+                'marca_id',
+                'industria_id',
+                'unidad_envase',
+                'stock',
+                'vencimiento'
+            ];
             foreach ($numericFields as $field) {
                 if (isset($data[$field]) && $data[$field] !== null && $data[$field] !== '') {
-                    $data[$field] = (int)$data[$field];
+                    $data[$field] = (int) $data[$field];
                 }
             }
 
-            $decimalFields = ['precio_costo_unid', 'precio_costo_paq', 'precio_venta', 
-                             'precio_uno', 'precio_dos', 'precio_tres', 'precio_cuatro', 'costo_compra'];
+            $decimalFields = [
+                'precio_costo_unid',
+                'precio_costo_paq',
+                'precio_venta',
+                'precio_uno',
+                'precio_dos',
+                'precio_tres',
+                'precio_cuatro',
+                'costo_compra'
+            ];
             foreach ($decimalFields as $field) {
                 if (isset($data[$field]) && $data[$field] !== null && $data[$field] !== '') {
-                    $data[$field] = (float)$data[$field];
+                    $data[$field] = (float) $data[$field];
                 }
             }
 
             // Filtrar valores null para no sobrescribir con null, pero mantener 0 y false
-            $data = array_filter($data, function($value) {
+            // EXCEPCIÓN: Permitir null para 'codigo' si se envió explícitamente
+            $data = array_filter($data, function ($value, $key) use ($allData) {
+                if ($key === 'codigo' && array_key_exists('codigo', $allData)) {
+                    return true;
+                }
                 return $value !== null;
-            });
+            }, ARRAY_FILTER_USE_BOTH);
 
             if ($request->hasFile('fotografia')) {
                 if ($articulo->fotografia) {
                     Storage::disk('public')->delete($articulo->fotografia);
                 }
-                $path = $request->file('fotografia')->store('articulos', 'public');
+
+                $file = $request->file('fotografia');
+                $manager = new ImageManager(new Driver());
+                $image = $manager->read($file);
+
+                if ($image->width() > 300) {
+                    $image->scale(width: 300);
+                }
+
+                $encoded = $image->toWebp(20);
+                $filename = pathinfo($file->getClientOriginalName(), PATHINFO_FILENAME) . '_' . time() . '.webp';
+                $path = 'articulos/' . $filename;
+
+                Storage::disk('public')->put($path, $encoded);
                 $data['fotografia'] = $path;
             }
 

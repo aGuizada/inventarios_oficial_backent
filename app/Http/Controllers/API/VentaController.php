@@ -152,7 +152,6 @@ class VentaController extends Controller
         ]);
 
         // Por defecto, solo mostrar productos con stock > 0
-        // Solo incluir sin stock si se solicita explícitamente
         if (!$incluirSinStock) {
             $query->where('saldo_stock', '>', 0);
         }
@@ -161,17 +160,57 @@ class VentaController extends Controller
             $query->where('almacen_id', $almacenId);
         }
 
-        $inventarios = $query->get();
-        
-        // Filtrar adicionalmente para asegurar que solo se devuelvan productos con stock > 0
-        // (por si acaso hay algún registro con stock negativo o cero que pasó el filtro)
-        if (!$incluirSinStock) {
-            $inventarios = $inventarios->filter(function ($inventario) {
-                return ($inventario->saldo_stock ?? 0) > 0;
+        if ($request->has('categoria_id')) {
+            $categoriaId = $request->categoria_id;
+            $query->whereHas('articulo', function ($q) use ($categoriaId) {
+                $q->where('categoria_id', $categoriaId);
             });
         }
 
-        // Formatear respuesta con información del artículo y stock disponible
+        // Aplicar búsqueda si existe
+        $searchableFields = [
+            'articulo.nombre',
+            'articulo.codigo',
+            'articulo.marca.nombre',
+            'articulo.categoria.nombre'
+        ];
+        $query = $this->applySearch($query, $request, $searchableFields);
+
+        // Aplicar ordenamiento
+        $query = $this->applySorting($query, $request, ['id', 'saldo_stock'], 'id', 'desc');
+
+        // Si se solicita paginación
+        if ($request->has('per_page') || $request->has('page')) {
+            $perPage = min((int) $request->get('per_page', 24), 100);
+            $paginated = $query->paginate($perPage);
+
+            $paginated->getCollection()->transform(function ($inventario) {
+                return [
+                    'inventario_id' => $inventario->id,
+                    'articulo_id' => $inventario->articulo_id,
+                    'almacen_id' => $inventario->almacen_id,
+                    'stock_disponible' => $inventario->saldo_stock ?? 0,
+                    'cantidad' => $inventario->cantidad,
+                    'articulo' => $inventario->articulo,
+                    'almacen' => $inventario->almacen,
+                ];
+            });
+
+            return response()->json([
+                'success' => true,
+                'data' => [
+                    'data' => $paginated->items(),
+                    'current_page' => $paginated->currentPage(),
+                    'last_page' => $paginated->lastPage(),
+                    'per_page' => $paginated->perPage(),
+                    'total' => $paginated->total(),
+                ]
+            ]);
+        }
+
+        // Comportamiento anterior (sin paginación)
+        $inventarios = $query->get();
+
         $productos = $inventarios->map(function ($inventario) {
             return [
                 'inventario_id' => $inventario->id,
@@ -304,7 +343,7 @@ class VentaController extends Controller
 
                 // Validar que el stock disponible sea suficiente
                 $stockDisponible = $inventario->saldo_stock ?? 0;
-                
+
                 // Permitir vender hasta que el stock llegue a 0
                 // Solo validar que el stock disponible sea suficiente para la cantidad a deducir
                 if ($stockDisponible < $cantidadDeducir) {
@@ -375,12 +414,12 @@ class VentaController extends Controller
             if ($request->has('numero_cuotas') && $request->has('tiempo_dias_cuota')) {
                 $tipoVenta = TipoVenta::find($request->tipo_venta_id);
                 $nombreTipoVenta = $tipoVenta ? strtolower(trim($tipoVenta->nombre_tipo_ventas)) : '';
-                
+
                 if (strpos($nombreTipoVenta, 'crédito') !== false || strpos($nombreTipoVenta, 'credito') !== false) {
                     // Calcular fecha del próximo pago
                     $fechaInicio = new \DateTime($request->fecha_hora);
                     $fechaInicio->modify('+' . $request->tiempo_dias_cuota . ' days');
-                    
+
                     \App\Models\CreditoVenta::create([
                         'venta_id' => $venta->id,
                         'cliente_id' => $request->cliente_id,
@@ -616,7 +655,7 @@ class VentaController extends Controller
                 $query->whereDate('fecha_hora', '<=', $request->fecha_hasta);
             }
             if ($request->sucursal_id) {
-                $query->whereHas('caja', function($q) use ($request) {
+                $query->whereHas('caja', function ($q) use ($request) {
                     $q->where('sucursal_id', $request->sucursal_id);
                 });
             }
@@ -690,7 +729,7 @@ class VentaController extends Controller
                 $query->whereDate('fecha_hora', '<=', $request->fecha_hasta);
             }
             if ($request->sucursal_id) {
-                $query->whereHas('caja', function($q) use ($request) {
+                $query->whereHas('caja', function ($q) use ($request) {
                     $q->where('sucursal_id', $request->sucursal_id);
                 });
             }
@@ -698,7 +737,7 @@ class VentaController extends Controller
             $ventas = $query->orderBy('fecha_hora', 'desc')->get();
 
             // Agrupar por fecha
-            $ventasPorFecha = $ventas->groupBy(function($venta) {
+            $ventasPorFecha = $ventas->groupBy(function ($venta) {
                 return \Carbon\Carbon::parse($venta->fecha_hora)->format('Y-m-d');
             });
 
