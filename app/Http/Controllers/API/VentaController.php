@@ -608,21 +608,73 @@ class VentaController extends Controller
 
     public function imprimirComprobante($id, $formato)
     {
-        $venta = Venta::with(['cliente', 'user', 'tipoVenta', 'tipoPago', 'detalles.articulo'])->find($id);
+        $venta = Venta::with(['cliente', 'user', 'tipoVenta', 'tipoPago', 'detalles.articulo', 'pagos.tipoPago'])->find($id);
 
         if (!$venta) {
             return response()->json(['message' => 'Venta no encontrada'], 404);
         }
 
         if ($formato === 'rollo') {
-            $pdf = \Barryvdh\DomPDF\Facade\Pdf::loadView('pdf.venta_rollo', compact('venta'));
-            $pdf->setPaper([0, 0, 226.77, 500], 'portrait'); // 80mm width (approx 226pt)
+            $pdf = \Barryvdh\DomPDF\Facade\Pdf::loadView('pdf.venta_rollo', [
+                'venta' => $venta,
+                'numeroALetras' => [$this, 'numeroALetras']
+            ]);
+            // 80mm width (226.77pt), altura mínima ajustada - se expandirá según contenido
+            $pdf->setPaper([0, 0, 226.77, 300], 'portrait'); // 80mm x ~106mm (ajustable)
+            $pdf->setOption('margin-top', 0);
+            $pdf->setOption('margin-bottom', 0);
+            $pdf->setOption('margin-left', 0);
+            $pdf->setOption('margin-right', 0);
+            $pdf->setOption('enable-smart-shrinking', false);
+            $pdf->setOption('dpi', 72);
         } else {
             $pdf = \Barryvdh\DomPDF\Facade\Pdf::loadView('pdf.venta_carta', compact('venta'));
             $pdf->setPaper('letter', 'portrait');
         }
 
         return $pdf->download("venta_{$venta->num_comprobante}.pdf");
+    }
+
+    /**
+     * Helper para convertir número a letras
+     */
+    public function numeroALetras($numero)
+    {
+        $unidades = ['', 'UNO', 'DOS', 'TRES', 'CUATRO', 'CINCO', 'SEIS', 'SIETE', 'OCHO', 'NUEVE'];
+        $decenas = ['', 'DIEZ', 'VEINTE', 'TREINTA', 'CUARENTA', 'CINCUENTA', 'SESENTA', 'SETENTA', 'OCHENTA', 'NOVENTA'];
+        $decenasEspeciales = ['DIEZ', 'ONCE', 'DOCE', 'TRECE', 'CATORCE', 'QUINCE', 'DIECISÉIS', 'DIECISIETE', 'DIECIOCHO', 'DIECINUEVE'];
+        $centenas = ['', 'CIEN', 'DOSCIENTOS', 'TRESCIENTOS', 'CUATROCIENTOS', 'QUINIENTOS', 'SEISCIENTOS', 'SETECIENTOS', 'OCHOCIENTOS', 'NOVECIENTOS'];
+        
+        $numero = (int) $numero;
+        if ($numero == 0) return 'CERO';
+        if ($numero < 10) return $unidades[$numero];
+        if ($numero < 20) return $decenasEspeciales[$numero - 10];
+        if ($numero < 100) {
+            $decena = (int)($numero / 10);
+            $unidad = $numero % 10;
+            if ($unidad == 0) return $decenas[$decena];
+            if ($decena == 2) return 'VEINTI' . $unidades[$unidad];
+            return $decenas[$decena] . ' Y ' . $unidades[$unidad];
+        }
+        if ($numero < 1000) {
+            $centena = (int)($numero / 100);
+            $resto = $numero % 100;
+            if ($centena == 1 && $resto == 0) return 'CIEN';
+            if ($centena == 1) return 'CIENTO ' . $this->numeroALetras($resto);
+            if ($resto == 0) return $centenas[$centena];
+            return $centenas[$centena] . ' ' . $this->numeroALetras($resto);
+        }
+        if ($numero < 1000000) {
+            $millar = (int)($numero / 1000);
+            $resto = $numero % 1000;
+            if ($millar == 1) {
+                if ($resto == 0) return 'MIL';
+                return 'MIL ' . $this->numeroALetras($resto);
+            }
+            if ($resto == 0) return $this->numeroALetras($millar) . ' MIL';
+            return $this->numeroALetras($millar) . ' MIL ' . $this->numeroALetras($resto);
+        }
+        return 'NÚMERO MUY GRANDE';
     }
 
     /**
