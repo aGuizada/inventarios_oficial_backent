@@ -25,6 +25,9 @@ class InventarioImport implements ToModel, WithHeadingRow, WithValidation, Skips
     use SkipsErrors, SkipsFailures;
 
     protected $importedCount = 0;
+    protected $totalRows = 0;
+    protected $errorCount = 0;
+    protected $skippedCount = 0;
     protected static $defaultCategoriaId = null;
     protected static $defaultProveedorId = null;
     protected static $defaultMedidaId = null;
@@ -33,6 +36,12 @@ class InventarioImport implements ToModel, WithHeadingRow, WithValidation, Skips
 
     public function model(array $row)
     {
+        $this->totalRows++;
+        $filaNumero = $this->totalRows;
+        
+        // Normalizar nombres de columnas a minúsculas para evitar problemas con mayúsculas/minúsculas
+        $row = array_change_key_case($row, CASE_LOWER);
+        
         // Normalizar el código: convertir números a string, manejar null/vacío
         $codigoRaw = $row['codigo_articulo'] ?? null;
         $codigoArticulo = null;
@@ -47,46 +56,63 @@ class InventarioImport implements ToModel, WithHeadingRow, WithValidation, Skips
 
         $nombreArticulo = trim($row['nombre_articulo'] ?? 'Sin nombre');
         
-        if (empty($nombreArticulo)) {
-            throw new \Exception('El nombre del artículo es obligatorio');
+        if (empty($nombreArticulo) || $nombreArticulo === 'Sin nombre') {
+            // Si no hay nombre, intentar usar el código como nombre
+            if ($codigoArticulo) {
+                $nombreArticulo = $codigoArticulo;
+            } else {
+                // Si no hay código ni nombre, omitir esta fila
+                \Log::warning("InventarioImport - Fila omitida: sin código ni nombre", [
+                    'fila_numero' => $filaNumero,
+                    'row' => $row
+                ]);
+                return null;
+            }
         }
         
         $articulo = null;
+        $articuloEncontrado = false;
         
-        // Si hay código, buscar por código primero
+        // Si hay código, buscar por código primero (puede haber códigos repetidos, tomar el primero)
         if ($codigoArticulo) {
             $articulo = Articulo::where('codigo', $codigoArticulo)->first();
+            if ($articulo) {
+                $articuloEncontrado = true;
+                \Log::debug("InventarioImport - Artículo encontrado por código", [
+                    'codigo' => $codigoArticulo,
+                    'nombre' => $nombreArticulo,
+                    'articulo_id' => $articulo->id,
+                    'fila' => $filaNumero
+                ]);
+            }
         }
         
         // Si no se encontró por código (o no hay código), buscar por nombre
         if (!$articulo) {
             $articulo = Articulo::where('nombre', $nombreArticulo)->first();
+            if ($articulo) {
+                $articuloEncontrado = true;
+                \Log::debug("InventarioImport - Artículo encontrado por nombre", [
+                    'codigo' => $codigoArticulo ?? 'N/A',
+                    'nombre' => $nombreArticulo,
+                    'articulo_id' => $articulo->id,
+                    'fila' => $filaNumero
+                ]);
+            }
         }
         
-        // Si no existe, crear uno nuevo
+        // IMPORTANTE: NO crear artículos nuevos durante la importación de inventario
+        // Solo importar inventario para artículos que YA EXISTEN en la tabla articulos
+        // Si el artículo no existe, omitir esta fila
         if (!$articulo) {
-            $articulo = Articulo::create([
-                'codigo' => $codigoArticulo,
+            $this->skippedCount++;
+            \Log::warning("InventarioImport - Artículo no encontrado, omitiendo fila", [
+                'codigo' => $codigoArticulo ?? 'N/A',
                 'nombre' => $nombreArticulo,
-                'categoria_id' => $this->getDefaultCategoriaId(),
-                'proveedor_id' => $this->getDefaultProveedorId(),
-                'medida_id' => $this->getDefaultMedidaId(),
-                'marca_id' => $this->getDefaultMarcaId(),
-                'industria_id' => $this->getDefaultIndustriaId(),
-                'unidad_envase' => 1,
-                'precio_costo_unid' => 0,
-                'precio_costo_paq' => 0,
-                'precio_venta' => 0,
-                'precio_uno' => null,
-                'precio_dos' => null,
-                'precio_tres' => null,
-                'precio_cuatro' => null,
-                'stock' => 0,
-                'descripcion' => null,
-                'costo_compra' => 0, // Campo requerido
-                'vencimiento' => null,
-                'estado' => 1
+                'fila' => $filaNumero,
+                'mensaje' => 'El artículo debe existir en la tabla de artículos antes de importar su inventario'
             ]);
+            return null; // Omitir esta fila - el artículo no existe
         }
         
         // Buscar sucursal: si viene en el Excel, buscar por nombre, si no, tomar la de menor id
@@ -100,14 +126,30 @@ class InventarioImport implements ToModel, WithHeadingRow, WithValidation, Skips
         }
 
         $almacenNombre = trim($row['almacen'] ?? 'General');
-        if (empty($almacenNombre)) {
-            $almacenNombre = 'General';
+        if (empty($almacenNombre) || $almacenNombre === '') {
+            // Si no hay almacén, usar el nombre de la sucursal o 'General'
+            $almacenNombre = $sucursal ? $sucursal->nombre : 'General';
         }
 
-        $almacen = Almacen::firstOrCreate([
-            'nombre_almacen' => $almacenNombre,
-            'sucursal_id' => $sucursal ? $sucursal->id : null,
-        ]);
+        try {
+            $almacen = Almacen::firstOrCreate(
+                [
+                    'nombre_almacen' => $almacenNombre,
+                    'sucursal_id' => $sucursal ? $sucursal->id : null,
+                ],
+                [
+                    'descripcion' => 'Almacén creado por importación'
+                ]
+            );
+        } catch (\Exception $e) {
+            \Log::error("InventarioImport - Error al crear/buscar almacén", [
+                'almacen_nombre' => $almacenNombre,
+                'sucursal_id' => $sucursal ? $sucursal->id : null,
+                'error' => $e->getMessage(),
+                'fila' => $this->totalRows
+            ]);
+            throw $e;
+        }
 
         // Normalizar cantidad y saldo_stock (pueden venir como string, número o vacío)
         $saldoStock = $this->parseNumeric($row['saldo_stock'] ?? null) ?? 0;
@@ -117,21 +159,73 @@ class InventarioImport implements ToModel, WithHeadingRow, WithValidation, Skips
         if ($cantidad == 0 && $saldoStock > 0) {
             $cantidad = $saldoStock;
         }
+        
+        // Si ambos son 0, usar 0 (producto agotado pero se importa igual)
+        if ($cantidad == 0 && $saldoStock == 0) {
+            $cantidad = 0;
+            $saldoStock = 0;
+        }
+        
+        // IMPORTANTE: Importar TODOS los productos, incluso con stock 0
+        // Los productos con stock 0 aparecerán como "agotado" pero se importan igual
 
-        $inventario = Inventario::updateOrCreate(
-            [
+        // IMPORTANTE: Cada fila del Excel crea un registro de inventario INDEPENDIENTE
+        // Los stocks son independientes - cada producto importado tiene su propio registro
+        // NO se suman stocks, cada fila crea un nuevo inventario (incluso si el producto, almacén y fecha son iguales)
+        $fechaVencimiento = $this->parseDate($row['fecha_vencimiento'] ?? null) ?? '2099-01-01';
+        
+        try {
+            // SIEMPRE crear un nuevo registro de inventario (independiente, sin importar si ya existe uno)
+            // Esto permite tener múltiples registros del mismo producto con diferentes stocks
+            $inventario = Inventario::create([
                 'articulo_id' => $articulo->id,
                 'almacen_id' => $almacen->id,
-                'fecha_vencimiento' => $this->parseDate($row['fecha_vencimiento'] ?? null) ?? '2099-01-01'
-            ],
-            [
+                'fecha_vencimiento' => $fechaVencimiento,
                 'saldo_stock' => $saldoStock,
                 'cantidad' => $cantidad,
-            ]
-        );
+            ]);
+            
+            // Verificar que se creó correctamente
+            if (!$inventario || !$inventario->id) {
+                throw new \Exception("No se pudo crear el inventario - el objeto retornado es nulo o no tiene ID");
+            }
+            
+            \Log::info("InventarioImport - Nuevo inventario creado exitosamente", [
+                'inventario_id' => $inventario->id,
+                'articulo_id' => $articulo->id,
+                'articulo_nombre' => $articulo->nombre,
+                'codigo' => $codigoArticulo ?? 'N/A',
+                'almacen_id' => $almacen->id,
+                'almacen_nombre' => $almacen->nombre_almacen ?? 'N/A',
+                'saldo_stock' => $saldoStock,
+                'cantidad' => $cantidad,
+                'fecha_vencimiento' => $fechaVencimiento,
+                'fila' => $filaNumero,
+                'imported_count' => $this->importedCount + 1
+            ]);
 
-        $this->importedCount++;
-        return $inventario;
+            $this->importedCount++;
+            return $inventario;
+        } catch (\Exception $e) {
+            $this->errorCount++;
+            \Log::error("InventarioImport - Error al crear inventario", [
+                'articulo_id' => $articulo->id ?? 'N/A',
+                'articulo_nombre' => $articulo->nombre ?? 'N/A',
+                'almacen_id' => $almacen->id ?? 'N/A',
+                'codigo' => $codigoArticulo ?? 'N/A',
+                'nombre' => $nombreArticulo ?? 'N/A',
+                'saldo_stock' => $saldoStock,
+                'cantidad' => $cantidad,
+                'fecha_vencimiento' => $fechaVencimiento,
+                'error' => $e->getMessage(),
+                'file' => $e->getFile(),
+                'line' => $e->getLine(),
+                'trace' => $e->getTraceAsString(),
+                'fila' => $filaNumero
+            ]);
+            // Re-lanzar la excepción para que SkipsOnError la maneje
+            throw $e;
+        }
     }
 
     /**
@@ -239,7 +333,31 @@ class InventarioImport implements ToModel, WithHeadingRow, WithValidation, Skips
 
     public function getSkippedCount(): int
     {
-        return count($this->failures());
+        // Contar tanto los failures de validación como las filas omitidas manualmente (stock 0, sin código/nombre, etc.)
+        return count($this->failures()) + $this->skippedCount;
+    }
+
+    public function getTotalRows(): int
+    {
+        return $this->totalRows;
+    }
+
+    public function getErrorCount(): int
+    {
+        return $this->errorCount;
+    }
+
+    /**
+     * Método llamado cuando hay un error al procesar una fila
+     */
+    public function onError(\Throwable $e)
+    {
+        $this->errorCount++;
+        \Log::error("InventarioImport - Error al procesar fila", [
+            'fila_numero' => $this->totalRows,
+            'error' => $e->getMessage(),
+            'trace' => $e->getTraceAsString()
+        ]);
     }
 
     /**

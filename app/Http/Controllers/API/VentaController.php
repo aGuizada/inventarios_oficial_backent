@@ -79,7 +79,7 @@ class VentaController extends Controller
     public function index(Request $request)
     {
         try {
-            $query = Venta::with(['cliente', 'user', 'tipoVenta', 'tipoPago', 'caja']);
+            $query = Venta::with(['cliente', 'user', 'tipoVenta', 'tipoPago', 'caja', 'pagos.tipoPago']);
 
             $searchableFields = [
                 'id',
@@ -152,8 +152,9 @@ class VentaController extends Controller
         ]);
 
         // Por defecto, solo mostrar productos con stock > 0
+        // Usar comparación con decimales: > 0.0001 para incluir valores como 0.50
         if (!$incluirSinStock) {
-            $query->where('saldo_stock', '>', 0);
+            $query->where('saldo_stock', '>', 0.0001);
         }
 
         if ($almacenId) {
@@ -189,8 +190,8 @@ class VentaController extends Controller
                     'inventario_id' => $inventario->id,
                     'articulo_id' => $inventario->articulo_id,
                     'almacen_id' => $inventario->almacen_id,
-                    'stock_disponible' => $inventario->saldo_stock ?? 0,
-                    'cantidad' => $inventario->cantidad,
+                    'stock_disponible' => (float) ($inventario->saldo_stock ?? 0),
+                    'cantidad' => (float) ($inventario->cantidad ?? 0),
                     'articulo' => $inventario->articulo,
                     'almacen' => $inventario->almacen,
                 ];
@@ -216,8 +217,8 @@ class VentaController extends Controller
                 'inventario_id' => $inventario->id,
                 'articulo_id' => $inventario->articulo_id,
                 'almacen_id' => $inventario->almacen_id,
-                'stock_disponible' => $inventario->saldo_stock ?? 0,
-                'cantidad' => $inventario->cantidad,
+                'stock_disponible' => (float) ($inventario->saldo_stock ?? 0),
+                'cantidad' => (float) ($inventario->cantidad ?? 0),
                 'articulo' => $inventario->articulo,
                 'almacen' => $inventario->almacen,
             ];
@@ -229,11 +230,14 @@ class VentaController extends Controller
     public function store(Request $request)
     {
         try {
+            // Validar que haya al menos un tipo de pago (tipo_pago_id o pagos array)
+            $tienePagosMixtos = $request->has('pagos') && is_array($request->pagos) && count($request->pagos) > 0;
+            
             $request->validate([
                 'cliente_id' => 'required|exists:clientes,id',
                 'user_id' => 'required|exists:users,id',
                 'tipo_venta_id' => 'required|exists:tipo_ventas,id',
-                'tipo_pago_id' => 'required|exists:tipo_pagos,id',
+                'tipo_pago_id' => $tienePagosMixtos ? 'nullable|exists:tipo_pagos,id' : 'required|exists:tipo_pagos,id',
                 'tipo_comprobante' => 'nullable|string|max:50',
                 'serie_comprobante' => 'nullable|string|max:50',
                 'num_comprobante' => 'nullable|string|max:50',
@@ -246,7 +250,7 @@ class VentaController extends Controller
                 'detalles.*.cantidad' => 'required|numeric|min:0.01',
                 'detalles.*.precio' => 'required|numeric|min:0',
                 'detalles.*.descuento' => 'nullable|numeric|min:0',
-                'detalles.*.unidad_medida' => 'nullable|string|in:Unidad,Paquete,Centimetro',
+                'detalles.*.unidad_medida' => 'nullable|string|in:Unidad,Paquete,Centimetro,Metro',
                 'pagos' => 'nullable|array',
                 'pagos.*.tipo_pago_id' => 'required|exists:tipo_pagos,id',
                 'pagos.*.monto' => 'required|numeric|min:0',
@@ -274,8 +278,8 @@ class VentaController extends Controller
                 'detalles.*.articulo_id.required' => 'El artículo es obligatorio en los detalles.',
                 'detalles.*.articulo_id.exists' => 'El artículo seleccionado no existe.',
                 'detalles.*.cantidad.required' => 'La cantidad es obligatoria en los detalles.',
-                'detalles.*.cantidad.integer' => 'La cantidad debe ser un número entero.',
-                'detalles.*.cantidad.min' => 'La cantidad debe ser al menos 1.',
+                'detalles.*.cantidad.numeric' => 'La cantidad debe ser un número válido.',
+                'detalles.*.cantidad.min' => 'La cantidad debe ser al menos 0.01.',
                 'detalles.*.precio.required' => 'El precio es obligatorio en los detalles.',
                 'detalles.*.precio.numeric' => 'El precio debe ser un número.',
                 'detalles.*.descuento.numeric' => 'El descuento debe ser un número.',
@@ -286,6 +290,23 @@ class VentaController extends Controller
                 'pagos.*.monto.numeric' => 'El monto debe ser un número.',
                 'pagos.*.monto.min' => 'El monto debe ser al menos 0.',
             ]);
+
+            // Validación adicional: debe haber al menos un tipo de pago
+            if (!$tienePagosMixtos && (!$request->tipo_pago_id || $request->tipo_pago_id === '')) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Debe seleccionar al menos un tipo de pago para la venta',
+                    'errors' => ['tipo_pago_id' => ['El tipo de pago es obligatorio.']]
+                ], 422);
+            }
+
+            if ($tienePagosMixtos && count($request->pagos) === 0) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Debe agregar al menos un pago para la venta',
+                    'errors' => ['pagos' => ['Debe agregar al menos un pago.']]
+                ], 422);
+            }
         } catch (ValidationException $e) {
             return response()->json([
                 'message' => 'Error de validación',
@@ -315,12 +336,12 @@ class VentaController extends Controller
                 $articuloId = (int) $detalle['articulo_id'];
                 $cantidadVenta = (float) $detalle['cantidad']; // Permitir decimales para Centimetro
 
-                // Buscar inventario del artículo
-                $inventario = Inventario::where('articulo_id', $articuloId)
+                // Buscar TODOS los registros de inventario del artículo en el almacén
+                $inventarios = Inventario::where('articulo_id', $articuloId)
                     ->where('almacen_id', $almacenId)
-                    ->first();
+                    ->get();
 
-                if (!$inventario) {
+                if ($inventarios->isEmpty()) {
                     DB::rollBack();
                     return response()->json([
                         'message' => 'Error de validación',
@@ -335,18 +356,49 @@ class VentaController extends Controller
                 $articulo = Articulo::find($articuloId);
                 $cantidadDeducir = $cantidadVenta;
 
+                // Calcular cantidad a deducir según la unidad de medida seleccionada
+                // IMPORTANTE: Todo se maneja en METROS como unidad base
                 if ($unidadMedida === 'Paquete' && $articulo) {
-                    $cantidadDeducir = $cantidadVenta * ($articulo->unidad_envase > 0 ? $articulo->unidad_envase : 1);
+                    // Si es paquete, multiplicar por las unidades por paquete
+                    $unidadEnvase = (float) ($articulo->unidad_envase ?? 1);
+                    $cantidadDeducir = $cantidadVenta * ($unidadEnvase > 0 ? $unidadEnvase : 1);
                 } elseif ($unidadMedida === 'Centimetro') {
+                    // Si es centímetro, dividir por 100 para convertir a metros (unidad base)
+                    // Ejemplo: 0.30 centímetros = 0.003 metros, 30 centímetros = 0.30 metros
                     $cantidadDeducir = $cantidadVenta / 100;
+                } elseif ($unidadMedida === 'Metro') {
+                    // Si es metro, se descuenta directamente en metros (unidad base)
+                    $cantidadDeducir = $cantidadVenta;
+                } else {
+                    // Si es 'Unidad' u otra, se usa la cantidad directamente (asumiendo que es en metros para productos de metros/centímetros)
+                    $cantidadDeducir = $cantidadVenta;
                 }
+                
+                // Asegurar que cantidadDeducir sea un número válido
+                $cantidadDeducir = (float) $cantidadDeducir;
 
                 // Validar que el stock disponible sea suficiente
-                $stockDisponible = $inventario->saldo_stock ?? 0;
+                // CRÍTICO: Usar CAST explícito para obtener el stock con precisión decimal
+                // Sumar todos los stocks disponibles de todos los registros de inventario usando SQL directo
+                $stockResult = DB::selectOne(
+                    "SELECT CAST(SUM(saldo_stock) AS DECIMAL(11,3)) as stock_total 
+                     FROM inventarios 
+                     WHERE articulo_id = ? AND almacen_id = ?",
+                    [$articuloId, $almacenId]
+                );
+                
+                // CRÍTICO: Redondear stock disponible a 3 decimales para mantener consistencia
+                $stockDisponible = round((float) ($stockResult->stock_total ?? 0), 3);
+                
+                // Redondear cantidadDeducir a 3 decimales para mantener consistencia
+                $cantidadDeducir = round($cantidadDeducir, 3);
+                
+                \Log::info("Validación de stock - Artículo ID: {$articuloId}, Stock disponible: {$stockDisponible}, Cantidad a deducir: {$cantidadDeducir}");
 
                 // Permitir vender hasta que el stock llegue a 0
-                // Solo validar que el stock disponible sea suficiente para la cantidad a deducir
-                if ($stockDisponible < $cantidadDeducir) {
+                // Usar comparación con tolerancia para manejar correctamente los decimales
+                // Si la diferencia es menor a 0.0001, consideramos que hay stock suficiente
+                if (($stockDisponible - $cantidadDeducir) < -0.0001) {
                     DB::rollBack();
                     return response()->json([
                         'message' => 'Error de validación',
@@ -381,16 +433,40 @@ class VentaController extends Controller
                 // Calcular cantidad a deducir según unidad de medida
                 $articuloId = (int) $detalle['articulo_id'];
                 $cantidadVenta = (float) $detalle['cantidad']; // Permitir decimales para Centimetro
-                $unidadMedida = $detalle['unidad_medida'];
+                $unidadMedida = $detalle['unidad_medida'] ?? 'Unidad'; // Valor por defecto si no viene
 
                 $articulo = Articulo::find($articuloId);
                 $cantidadDeducir = $cantidadVenta;
 
+                // Calcular cantidad a deducir según la unidad de medida seleccionada
+                // IMPORTANTE: Todo se maneja en METROS como unidad base
                 if ($unidadMedida === 'Paquete' && $articulo) {
-                    $cantidadDeducir = $cantidadVenta * ($articulo->unidad_envase > 0 ? $articulo->unidad_envase : 1);
+                    // Si es paquete, multiplicar por las unidades por paquete
+                    $unidadEnvase = (float) ($articulo->unidad_envase ?? 1);
+                    $cantidadDeducir = $cantidadVenta * ($unidadEnvase > 0 ? $unidadEnvase : 1);
                 } elseif ($unidadMedida === 'Centimetro') {
+                    // Si es centímetro, dividir por 100 para convertir a metros (unidad base)
+                    // Ejemplo: 0.30 centímetros = 0.003 metros, 30 centímetros = 0.30 metros
                     $cantidadDeducir = $cantidadVenta / 100;
+                } elseif ($unidadMedida === 'Metro') {
+                    // Si es metro, se descuenta directamente en metros (unidad base)
+                    $cantidadDeducir = $cantidadVenta;
+                } else {
+                    // Si es 'Unidad' u otra, se usa la cantidad directamente (asumiendo que es en metros para productos de metros/centímetros)
+                    $cantidadDeducir = $cantidadVenta;
                 }
+                
+                // Asegurar que cantidadDeducir sea un número válido y redondear a 3 decimales
+                $cantidadDeducir = round((float) $cantidadDeducir, 3);
+                
+                // CRÍTICO: Formatear el valor a string con 3 decimales para asegurar precisión
+                $cantidadSalidaFormateada = number_format($cantidadDeducir, 3, '.', '');
+                $cantidadSalidaFinal = (float) $cantidadSalidaFormateada;
+                
+                // Log para depuración
+                \Log::info("Venta - Descontando stock");
+                \Log::info("Articulo ID: {$articuloId}, Cantidad Venta: {$cantidadVenta}, Unidad: {$unidadMedida}");
+                \Log::info("Cantidad a Deducir (redondeada): {$cantidadDeducir}, Cantidad Salida Final: {$cantidadSalidaFinal}");
 
                 // Registrar movimiento en Kardex y actualizar stock usando KardexService
                 $this->kardexService->registrarMovimiento([
@@ -401,7 +477,7 @@ class VentaController extends Controller
                     'documento_tipo' => $request->tipo_comprobante ?? 'ticket',
                     'documento_numero' => $request->num_comprobante ?? 'S/N',
                     'cantidad_entrada' => 0,
-                    'cantidad_salida' => $cantidadDeducir,
+                    'cantidad_salida' => $cantidadSalidaFinal,
                     'costo_unitario' => $articulo->precio_costo ?? 0, // Usar costo del artículo
                     'precio_unitario' => $detalle['precio'], // Precio de venta (ya calculado)
                     'observaciones' => 'Venta ' . ($request->tipo_comprobante ?? 'ticket') . ' ' . ($request->num_comprobante ?? ''),
@@ -493,6 +569,20 @@ class VentaController extends Controller
             }
 
             DB::commit();
+            
+            // Log para verificar que el commit se hizo correctamente
+            \Log::info("VentaController - Commit de transacción realizado para venta_id: {$venta->id}");
+            
+            // Verificar el stock después del commit
+            foreach ($request->detalles as $detalle) {
+                $articuloId = (int) $detalle['articulo_id'];
+                $inventario = \App\Models\Inventario::where('articulo_id', $articuloId)
+                    ->where('almacen_id', $almacenId)
+                    ->first();
+                if ($inventario) {
+                    \Log::info("Stock después del commit - Articulo ID: {$articuloId}, Stock: {$inventario->saldo_stock}");
+                }
+            }
 
             // Reload venta with relationships for notifications
             $venta->load(['detalles.articulo', 'tipoVenta', 'cliente']);
@@ -536,7 +626,7 @@ class VentaController extends Controller
             ], 404);
         }
 
-        $venta->load(['cliente', 'user', 'tipoVenta', 'tipoPago', 'caja', 'detalles.articulo']);
+        $venta->load(['cliente', 'user', 'tipoVenta', 'tipoPago', 'caja', 'detalles.articulo.medida', 'detalles.articulo.marca']);
         return response()->json($venta);
     }
 
@@ -608,16 +698,28 @@ class VentaController extends Controller
 
     public function imprimirComprobante($id, $formato)
     {
-        $venta = Venta::with(['cliente', 'user', 'tipoVenta', 'tipoPago', 'detalles.articulo', 'pagos.tipoPago'])->find($id);
+        $venta = Venta::with(['cliente', 'user', 'tipoVenta', 'tipoPago', 'detalles.articulo.marca', 'detalles.articulo.medida', 'pagos.tipoPago'])->find($id);
 
         if (!$venta) {
             return response()->json(['message' => 'Venta no encontrada'], 404);
         }
 
         if ($formato === 'rollo') {
+            // Calcular el número en letras antes de pasar a la vista
+            $total = (float) $venta->total;
+            $parteEntera = (int) $total;
+            
+            // Asegurar que siempre se calcule el número en letras
+            try {
+                $numeroEnLetras = ucfirst(strtolower($this->numeroALetras($parteEntera)));
+            } catch (\Exception $e) {
+                \Log::error('Error al convertir número a letras: ' . $e->getMessage());
+                $numeroEnLetras = 'CERO';
+            }
+            
             $pdf = \Barryvdh\DomPDF\Facade\Pdf::loadView('pdf.venta_rollo', [
                 'venta' => $venta,
-                'numeroALetras' => [$this, 'numeroALetras']
+                'numeroEnLetras' => $numeroEnLetras
             ]);
             // 80mm width (226.77pt), altura mínima ajustada - se expandirá según contenido
             $pdf->setPaper([0, 0, 226.77, 300], 'portrait'); // 80mm x ~106mm (ajustable)
@@ -770,7 +872,8 @@ class VentaController extends Controller
                 'user',
                 'tipoVenta',
                 'tipoPago',
-                'caja.sucursal'
+                'caja.sucursal',
+                'pagos.tipoPago'
             ]);
 
             // Aplicar filtros

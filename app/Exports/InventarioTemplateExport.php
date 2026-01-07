@@ -14,6 +14,7 @@ class InventarioTemplateExport implements FromArray, WithHeadings, WithTitle
             [
                 'codigo_articulo' => '',
                 'nombre_articulo' => '',
+                'marca' => '',
                 'sucursal' => '',
                 'almacen' => '',
                 'saldo_stock' => '',
@@ -28,6 +29,7 @@ class InventarioTemplateExport implements FromArray, WithHeadings, WithTitle
         return [
             'codigo_articulo',
             'nombre_articulo',
+            'marca',
             'sucursal',
             'almacen',
             'saldo_stock',

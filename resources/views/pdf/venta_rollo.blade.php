@@ -22,11 +22,14 @@ body {
 
 .header, .footer {
     text-align: center;
+    margin-bottom: 5px;
 }
 
 .company-name {
     font-weight: bold;
-    font-size: 10px;
+    font-size: 16px;
+    margin-bottom: 3px;
+    display: block;
 }
 
 .info {
@@ -104,29 +107,74 @@ th {
 
 <body>
     <div class="header">
-        <div class="company-name">MC AUTOPARTS</div>
-        <div>Ticket: {{ $venta->num_comprobante }}</div>
+        <div class="company-name"><strong>MC AUTOPARTS</strong></div>
+
+        <div>Nº Comprobante: {{ $venta->num_comprobante }}</div>
     </div>
 
     <div class="info">
         <div>Fecha: {{ $venta->fecha_hora }}</div>
-                <div>Cliente: {{ $venta->cliente ? Str::limit($venta->cliente->nombre, 20) : 'sin nombre' }}</div>
-    </div>
 
+                <div>Cliente: {{ $venta->cliente ? Str::limit($venta->cliente->nombre, 20) : 'sin nombre' }}</div>
+                
+    </div>
+    
     <table>
     <thead>
         <tr>
             <th class="col-cant">Cant</th>
-            <th class="col-desc">Descripcion</th>
-            <th class="col-pu">P.U.</th>
+            <th class="col-desc">Detalle</th>
+            <th class="col-pu">P.Unt.</th>
             <th class="col-total">Subtotal</th>
         </tr>
     </thead>
     <tbody>
         @foreach($venta->detalles as $detalle)
         <tr>
-            <td class="col-cant">{{ $detalle->cantidad }}</td>
-            <td class="col-desc">{{ Str::limit($detalle->articulo->nombre, 100) }}</td>
+            <td class="col-cant">
+                @php
+                    $unidad = strtolower(trim($detalle->unidad_medida ?? 'unidad'));
+                    $cantidad = (float) $detalle->cantidad;
+                    
+                    // Verificar si el artículo tiene medida en metros o centímetros
+                    $esMetroOCentimetro = false;
+                    if ($detalle->articulo && $detalle->articulo->medida) {
+                        $nombreMedida = strtolower(trim($detalle->articulo->medida->nombre_medida ?? $detalle->articulo->medida->nombre ?? ''));
+                        if (strpos($nombreMedida, 'metro') !== false || strpos($nombreMedida, 'centimetro') !== false || strpos($nombreMedida, 'centímetro') !== false) {
+                            $esMetroOCentimetro = true;
+                        }
+                    }
+                    
+                    // Verificar si la cantidad tiene decimales significativos
+                    // Redondear a 3 decimales primero para evitar problemas de precisión
+                    $cantidadRedondeada = round($cantidad, 3);
+                    $parteEntera = floor($cantidadRedondeada);
+                    $parteDecimal = abs($cantidadRedondeada - $parteEntera);
+                    $tieneDecimales = $parteDecimal > 0.0001;
+                    
+                    // SIEMPRE mostrar con 2 decimales si:
+                    // 1. La unidad es metro o centímetro
+                    // 2. El artículo tiene medida en metros/centímetros
+                    // 3. La cantidad tiene decimales (aunque la unidad sea "Unidad")
+                    // Si tiene decimales, SIEMPRE mostrar con 2 decimales sin importar la unidad
+                    if ($unidad === 'centimetro' || $unidad === 'metro' || $unidad === 'metros' || $esMetroOCentimetro || $tieneDecimales) {
+                        // Siempre mostrar con 2 decimales
+                        echo number_format($cantidad, 2, '.', '');
+                    } else {
+                        // Solo para Unidad y Paquete sin decimales, mostrar como entero
+                        echo number_format($cantidad, 0, '.', '');
+                    }
+                @endphp
+            </td>
+            <td class="col-desc">
+                {{ Str::limit($detalle->articulo->nombre, 100) }}
+                @if($detalle->articulo->codigo)
+                    ({{ $detalle->articulo->codigo }})
+                @endif
+                @if($detalle->articulo->marca && $detalle->articulo->marca->nombre)
+                    <br><span style="font-size: 7px; color: #666;">Marca: {{ Str::limit($detalle->articulo->marca->nombre, 30) }}</span>
+                @endif
+            </td>
             <td class="col-pu">{{ number_format($detalle->precio, 2) }}</td>
             <td class="col-total">
                 {{ number_format(($detalle->cantidad * $detalle->precio) - $detalle->descuento, 2) }}
@@ -143,61 +191,17 @@ th {
 
     <div class="total-letras">
         @php
-            $total = $venta->total;
+            $total = (float) $venta->total;
             $parteEntera = (int) $total;
             $parteDecimal = round(($total - $parteEntera) * 100);
             $centavos = str_pad($parteDecimal, 2, '0', STR_PAD_LEFT);
-            $numeroEnLetras = ucfirst(strtolower(call_user_func($numeroALetras, $parteEntera)));
+            
+            // Usar el número en letras que viene del controlador
+            // Si no viene, mostrar solo el número
+            $textoNumero = isset($numeroEnLetras) && !empty($numeroEnLetras) ? $numeroEnLetras : 'CERO';
         @endphp
-        <div><strong>SON:</strong> {{ $numeroEnLetras }} {{ $centavos }}/100 Bolivianos</div>
-        <div class="payment-method">
-            <strong>Forma de pago:</strong>
-            @php
-                $formaPagoTexto = '';
-                $tiposPago = [];
-                
-                // Primero intentar obtener de los pagos detallados
-                if ($venta->pagos && $venta->pagos->count() > 0) {
-                    foreach($venta->pagos as $pago) {
-                        if ($pago->tipoPago && $pago->tipoPago->nombre) {
-                            $nombrePago = trim($pago->tipoPago->nombre);
-                            if (!empty($nombrePago)) {
-                                $tiposPago[] = $nombrePago;
-                            }
-                        }
-                    }
-                }
-                
-                // Si no hay pagos detallados, usar el tipoPago de la venta
-                if (count($tiposPago) == 0 && $venta->tipoPago && $venta->tipoPago->nombre) {
-                    $nombrePago = trim($venta->tipoPago->nombre);
-                    if (!empty($nombrePago)) {
-                        $tiposPago[] = $nombrePago;
-                    }
-                }
-                
-                // Procesar y mostrar los tipos de pago
-                if (count($tiposPago) > 0) {
-                    $tiposPago = array_unique($tiposPago);
-                    // Ordenar para que Efectivo aparezca primero si existe
-                    if (count($tiposPago) > 1) {
-                        usort($tiposPago, function($a, $b) {
-                            $orden = ['Efectivo' => 1, 'EFECTIVO' => 1, 'QR' => 2, 'QR SIMPLE' => 2];
-                            $ordenA = $orden[$a] ?? 99;
-                            $ordenB = $orden[$b] ?? 99;
-                            return $ordenA <=> $ordenB;
-                        });
-                        $formaPagoTexto = implode(' / ', $tiposPago);
-                    } else {
-                        $formaPagoTexto = $tiposPago[0];
-                    }
-                } else {
-                    // Fallback si no hay nada
-                    $formaPagoTexto = 'QR SIMPLE';
-                }
-            @endphp
-            {{ $formaPagoTexto }}
-        </div>
+        <div><strong>SON:</strong> {{ $textoNumero }} {{ $centavos }}/100 Bolivianos</div>
+        
     </div>
 
     <div class="footer">

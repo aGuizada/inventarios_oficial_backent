@@ -74,7 +74,7 @@ class ArticuloController extends Controller
                 'precio_dos' => 'nullable|numeric',
                 'precio_tres' => 'nullable|numeric',
                 'precio_cuatro' => 'nullable|numeric',
-                'stock' => 'required|integer',
+                'stock' => 'required|numeric|min:0',
                 'descripcion' => 'nullable|string|max:256',
                 'costo_compra' => 'required|numeric',
                 'vencimiento' => 'nullable|integer',
@@ -194,7 +194,7 @@ class ArticuloController extends Controller
                 $rules['precio_cuatro'] = 'nullable|numeric';
             }
             if (isset($allData['stock'])) {
-                $rules['stock'] = 'nullable|integer';
+                $rules['stock'] = 'nullable|numeric|min:0';
             }
             if (isset($allData['descripcion'])) {
                 $rules['descripcion'] = 'nullable|string|max:256';
@@ -385,13 +385,15 @@ class ArticuloController extends Controller
 
             $importedCount = $import->getImportedCount();
             $skippedCount = $import->getSkippedCount();
+            $totalRows = $import->getTotalRows();
 
             return response()->json([
                 'message' => 'Importación completada',
                 'data' => [
-                    'total_procesadas' => $importedCount + $skippedCount,
+                    'total_filas_procesadas' => $totalRows,
                     'importadas_exitosamente' => $importedCount,
-                    'filas_con_errores' => $skippedCount,
+                    'filas_omitidas_duplicados' => $skippedCount,
+                    'filas_con_errores' => $import->getErrorCount(),
                     'errores' => $errors,
                 ],
             ], 200);
@@ -409,15 +411,37 @@ class ArticuloController extends Controller
                 ];
             }
 
+            $importedCount = isset($import) ? $import->getImportedCount() : 0;
+            $skippedCount = isset($import) ? $import->getSkippedCount() : count($errors);
+
             return response()->json([
                 'message' => 'Error de validación en el archivo',
-                'errors' => $errors,
+                'data' => [
+                    'importadas_exitosamente' => $importedCount,
+                    'filas_con_errores' => $skippedCount,
+                    'errores' => $errors,
+                ],
             ], 422);
 
         } catch (\Exception $e) {
+            \Log::error('Error en importación de artículos', [
+                'message' => $e->getMessage(),
+                'file' => $e->getFile(),
+                'line' => $e->getLine(),
+                'trace' => $e->getTraceAsString()
+            ]);
+            
+            // Intentar obtener el conteo de importados incluso si hubo un error
+            $importedCount = isset($import) ? $import->getImportedCount() : 0;
+            $skippedCount = isset($import) ? $import->getSkippedCount() : 0;
+            
             return response()->json([
                 'message' => 'Error al procesar el archivo',
-                'error' => $e->getMessage(),
+                'data' => [
+                    'importadas_exitosamente' => $importedCount,
+                    'filas_con_errores' => $skippedCount,
+                    'error' => config('app.debug') ? $e->getMessage() : 'Error interno del servidor',
+                ],
             ], 500);
         }
     }

@@ -20,6 +20,7 @@ return [
 
     'allowed_origins' => [
         env('FRONTEND_URL', 'http://localhost:4200'),
+        'http://localhost:4200',
         'https://mc-autoparts.soft-lg.com',
     ],
 
