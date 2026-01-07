@@ -121,7 +121,7 @@ th {
     
     <table>
     <thead>
-        <tr>
+        <tr> 
             <th class="col-cant">Cant</th>
             <th class="col-desc">Detalle</th>
             <th class="col-pu">P.Unt.</th>
@@ -177,7 +177,24 @@ th {
             </td>
             <td class="col-pu">{{ number_format($detalle->precio, 2) }}</td>
             <td class="col-total">
-                {{ number_format(($detalle->cantidad * $detalle->precio) - $detalle->descuento, 2) }}
+                @php
+                    $subtotalSinDescuento = $detalle->cantidad * $detalle->precio;
+                    $descuento = (float) ($detalle->descuento ?? 0);
+                    $subtotalConDescuento = $subtotalSinDescuento - $descuento;
+                @endphp
+                @if($descuento > 0)
+                    <div style="font-size: 7px; color: #666; text-decoration: line-through;">
+                        {{ number_format($subtotalSinDescuento, 2) }}
+                    </div>
+                    <div style="font-weight: bold;">
+                        {{ number_format($subtotalConDescuento, 2) }}
+                    </div>
+                    <div style="font-size: 7px; color: #d32f2f;">
+                        Desc: -{{ number_format($descuento, 2) }}
+                    </div>
+                @else
+                    {{ number_format($subtotalConDescuento, 2) }}
+                @endif
             </td>
         </tr>
         @endforeach

@@ -392,8 +392,6 @@ class VentaController extends Controller
                 
                 // Redondear cantidadDeducir a 3 decimales para mantener consistencia
                 $cantidadDeducir = round($cantidadDeducir, 3);
-                
-                \Log::info("Validación de stock - Artículo ID: {$articuloId}, Stock disponible: {$stockDisponible}, Cantidad a deducir: {$cantidadDeducir}");
 
                 // Permitir vender hasta que el stock llegue a 0
                 // Usar comparación con tolerancia para manejar correctamente los decimales
@@ -463,10 +461,7 @@ class VentaController extends Controller
                 $cantidadSalidaFormateada = number_format($cantidadDeducir, 3, '.', '');
                 $cantidadSalidaFinal = (float) $cantidadSalidaFormateada;
                 
-                // Log para depuración
-                \Log::info("Venta - Descontando stock");
-                \Log::info("Articulo ID: {$articuloId}, Cantidad Venta: {$cantidadVenta}, Unidad: {$unidadMedida}");
-                \Log::info("Cantidad a Deducir (redondeada): {$cantidadDeducir}, Cantidad Salida Final: {$cantidadSalidaFinal}");
+                \Log::info("Venta - Descontando stock. Artículo: {$articuloId}, Cantidad: {$cantidadVenta} {$unidadMedida}, A deducir: {$cantidadSalidaFinal}");
 
                 // Registrar movimiento en Kardex y actualizar stock usando KardexService
                 $this->kardexService->registrarMovimiento([

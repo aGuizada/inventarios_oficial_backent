@@ -335,10 +335,7 @@ class KardexService
         $salida = round((float) $salida, 3);
         $diferencia = (float) ($entrada - $salida);
         
-        // Log para depuración
-        \Log::info("=== ACTUALIZACIÓN DE INVENTARIO ===");
-        \Log::info("Articulo ID: {$articuloId}, Almacen ID: {$almacenId}");
-        \Log::info("Entrada: {$entrada}, Salida: {$salida}, Diferencia: {$diferencia}");
+        \Log::info("Actualizar Inventario - Artículo: {$articuloId}, Almacén: {$almacenId}, Entrada: {$entrada}, Salida: {$salida}, Diferencia: {$diferencia}");
         
         // CRÍTICO: Obtener TODOS los registros de inventario para este artículo y almacén
         // NO usar el modelo Eloquent para evitar problemas de caché
@@ -420,7 +417,7 @@ class KardexService
         $cantidadADescontar = round(abs($diferencia), 3);
         $cantidadRestante = (float) $cantidadADescontar;
         
-        \Log::info("Descontando {$cantidadADescontar} unidades usando FIFO de " . $registrosBD->count() . " registros");
+        \Log::info("Descontando {$cantidadADescontar} unidades usando FIFO de {$registrosBD->count()} registros");
         
         foreach ($registrosBD as $registro) {
             // Usar comparación con tolerancia para decimales
@@ -432,7 +429,7 @@ class KardexService
             $registroId = is_object($registro) ? ($registro->id ?? null) : ($registro['id'] ?? null);
             
             if (!$registroId) {
-                \Log::warning("Registro sin ID, saltando... Registro: " . json_encode($registro));
+                \Log::warning("Registro sin ID, saltando");
                 continue;
             }
             
@@ -447,15 +444,13 @@ class KardexService
             );
             
             if (!$registroActualizado) {
-                \Log::warning("Registro no encontrado después de SELECT, saltando... ID buscado: {$registroId}");
+                \Log::warning("Registro no encontrado después de SELECT, ID: {$registroId}");
                 continue; // Saltar si el registro ya no existe
             }
             
             // Asegurar que el valor se convierta correctamente a float manteniendo los decimales
             $stockDisponible = (float) ($registroActualizado->saldo_stock ?? 0);
             $idRegistro = (int) ($registroActualizado->id ?? $registroId);
-            
-            \Log::info("Registro encontrado - ID: {$idRegistro}, Stock disponible: {$stockDisponible}");
             
             // Usar comparación con tolerancia para decimales
             if ($stockDisponible <= 0.0001) {
@@ -469,8 +464,6 @@ class KardexService
             
             $stockAnterior = $stockDisponible;
             
-            \Log::info("Descontando {$cantidadADescontarDeEste} del registro ID: {$idRegistro} (Stock antes: {$stockAnterior}, Cantidad restante: {$cantidadRestante})");
-            
             // CRÍTICO: Leer el valor actual de la BD ANTES de hacer el UPDATE
             // Esto asegura que tenemos el valor más reciente y calculamos correctamente en PHP
             $registroActual = \DB::selectOne(
@@ -481,7 +474,7 @@ class KardexService
             );
             
             if (!$registroActual) {
-                \Log::error("ERROR: No se pudo leer el registro antes del UPDATE para ID: {$idRegistro}");
+                \Log::error("No se pudo leer el registro antes del UPDATE, ID: {$idRegistro}");
                 continue;
             }
             
@@ -492,21 +485,11 @@ class KardexService
             $nuevaCantidad = round($cantidadActual - $cantidadADescontarDeEste, 3);
             $nuevoSaldoStock = round($saldoStockActual - $cantidadADescontarDeEste, 3);
             
-            \Log::info("=== EJECUTANDO UPDATE DE STOCK ===");
-            \Log::info("Registro ID: {$idRegistro}");
-            \Log::info("Cantidad ANTES: {$cantidadActual}, Saldo Stock ANTES: {$saldoStockActual}");
-            \Log::info("Cantidad a descontar: {$cantidadADescontarDeEste}");
-            \Log::info("Cantidad DESPUÉS (calculada): {$nuevaCantidad}, Saldo Stock DESPUÉS (calculado): {$nuevoSaldoStock}");
-            
             // CRÍTICO: Asegurar que los valores no sean negativos y estén redondeados
             $nuevaCantidad = max(0, round($nuevaCantidad, 3));
             $nuevoSaldoStock = max(0, round($nuevoSaldoStock, 3));
             
-            \Log::info("=== EJECUTANDO UPDATE DE STOCK ===");
-            \Log::info("Registro ID: {$idRegistro}");
-            \Log::info("Cantidad ANTES: {$cantidadActual}, Saldo Stock ANTES: {$saldoStockActual}");
-            \Log::info("Cantidad a descontar: {$cantidadADescontarDeEste}");
-            \Log::info("Cantidad DESPUÉS (calculada): {$nuevaCantidad}, Saldo Stock DESPUÉS (calculado): {$nuevoSaldoStock}");
+            \Log::info("UPDATE Stock - ID: {$idRegistro}, Antes: cantidad={$cantidadActual}, saldo={$saldoStockActual}, Descontar: {$cantidadADescontarDeEste}, Después: cantidad={$nuevaCantidad}, saldo={$nuevoSaldoStock}");
             
             // CRÍTICO: Usar update() directamente en el modelo para forzar la actualización
             try {
@@ -517,16 +500,13 @@ class KardexService
                         'saldo_stock' => $nuevoSaldoStock,
                     ]);
                 
-                \Log::info("UPDATE ejecutado usando Eloquent::update() - Filas afectadas: {$filasAfectadas}");
-                
                 if ($filasAfectadas === 0) {
-                    \Log::warning("UPDATE con Eloquent::update() no afectó filas, intentando con Query Builder...");
+                    \Log::warning("UPDATE con Eloquent falló, intentando con Query Builder para ID: {$idRegistro}");
                     // Intentar con Query Builder como respaldo
                     $filasAfectadas = \DB::update(
                         "UPDATE inventarios SET cantidad = ?, saldo_stock = ?, updated_at = NOW() WHERE id = ?",
                         [$nuevaCantidad, $nuevoSaldoStock, $idRegistro]
                     );
-                    \Log::info("Reintento con Query Builder - Filas afectadas: {$filasAfectadas}");
                     
                     if ($filasAfectadas === 0) {
                         // Verificar si el registro existe
@@ -560,17 +540,9 @@ class KardexService
                 $stockDespuesVerificado = (float)$registroDespues->saldo_stock;
                 $diferencia = abs($stockDespuesVerificado - $nuevoStock);
                 
-                \Log::info("=== VERIFICACIÓN DESPUÉS DEL UPDATE ===");
-                \Log::info("Stock DESPUÉS del UPDATE: {$stockDespuesVerificado}");
-                \Log::info("Stock ESPERADO: {$nuevoStock}");
-                \Log::info("Diferencia: {$diferencia}");
-                \Log::info("Valores DESPUÉS en BD: cantidad={$registroDespues->cantidad}, saldo_stock={$registroDespues->saldo_stock}");
-                
                 // Usar tolerancia más amplia para evitar falsos positivos por redondeo de MySQL
                 if ($diferencia > 0.01) {
-                    \Log::warning("ADVERTENCIA: Diferencia mayor a 0.01. Stock antes: {$stockAnterior}, Descontado: {$cantidadADescontarDeEste}, Esperado: {$nuevoStock}, Obtenido: {$stockDespuesVerificado}");
-                } else {
-                    \Log::info("✓ Stock actualizado correctamente. Diferencia: {$diferencia}");
+                    \Log::warning("Stock verificado - Diferencia alta: {$diferencia}. Esperado: {$nuevoStock}, Obtenido: {$stockDespuesVerificado}");
                 }
             }
         }
@@ -588,10 +560,6 @@ class KardexService
     {
         $diferenciaStock = (float) ($entrada - $salida);
         
-        \Log::info("=== ACTUALIZACIÓN DE ARTÍCULO ===");
-        \Log::info("ID artículo: {$articuloId}");
-        \Log::info("Entrada: {$entrada}, Salida: {$salida}, Diferencia: {$diferenciaStock}");
-        
         // CRÍTICO: Obtener el stock directamente desde BD usando CAST explícito para precisión decimal
         $stockResult = \DB::selectOne(
             "SELECT CAST(stock AS DECIMAL(11,3)) as stock 
@@ -601,7 +569,7 @@ class KardexService
         );
         
         if (!$stockResult || $stockResult->stock === null) {
-            \Log::error("ERROR: No se encontró el artículo con ID: {$articuloId}");
+            \Log::error("No se encontró el artículo con ID: {$articuloId}");
             return;
         }
         
@@ -610,14 +578,8 @@ class KardexService
         $diferenciaStock = round($diferenciaStock, 3);
         $nuevoStock = round((float) $stockAnterior + $diferenciaStock, 3);
         
-        \Log::info("Stock ANTES en BD: {$stockAnterior}");
-        \Log::info("Stock DESPUÉS esperado: {$nuevoStock}");
-        
         // CRÍTICO: Formatear el valor con 3 decimales para asegurar precisión
         $diferenciaStockFormateada = number_format((float)$diferenciaStock, 3, '.', '');
-        
-        \Log::info("Ejecutando UPDATE con operación aritmética directa...");
-        \Log::info("Stock ANTES: {$stockAnterior}, Diferencia: {$diferenciaStockFormateada}, Stock ESPERADO: {$nuevoStock}");
         
         // CRÍTICO: Usar \DB::statement() con CAST explícito para asegurar precisión decimal
         $resultado = \DB::statement(
@@ -627,12 +589,6 @@ class KardexService
             WHERE id = ?",
             [$diferenciaStockFormateada, $articuloId]
         );
-        
-        $filasAfectadas = $resultado ? 1 : 0;
-        
-        \Log::info("UPDATE ejecutado (artículo) - Filas afectadas: {$filasAfectadas}");
-        
-        \Log::info("UPDATE ejecutado - Filas afectadas: " . ($filasAfectadas ? '1' : '0'));
         
         // Verificar DESPUÉS del UPDATE usando CAST explícito
         $stockDespuesResult = \DB::selectOne(
@@ -644,12 +600,8 @@ class KardexService
         
         $stockDespues = $stockDespuesResult ? (float) $stockDespuesResult->stock : 0;
         
-        \Log::info("Stock DESPUÉS en BD: {$stockDespues}");
-        
         if (abs($stockDespues - $nuevoStock) > 0.0001) {
-            \Log::error("ERROR: Stock no coincide. Esperado: {$nuevoStock}, Obtenido: {$stockDespues}");
-        } else {
-            \Log::info("✓ Stock del artículo actualizado correctamente");
+            \Log::error("Stock artículo - No coincide. Esperado: {$nuevoStock}, Obtenido: {$stockDespues}");
         }
     }
 

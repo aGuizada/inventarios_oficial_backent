@@ -62,8 +62,7 @@ class ArticuloController extends Controller
                 'codigo' => [
                     'nullable',
                     'string',
-                    'max:255',
-                    Rule::unique('articulos', 'codigo')->whereNotNull('codigo')
+                    'max:255'
                 ],
                 'nombre' => 'required|string|max:255',
                 'unidad_envase' => 'required|integer',
@@ -132,12 +131,48 @@ class ArticuloController extends Controller
     public function update(Request $request, Articulo $articulo)
     {
         try {
+            // Asegurar que el artículo esté cargado con el código actual desde la BD
+            $articulo->refresh();
+            
+            // Verificar el código directamente desde la BD para asegurar que tenemos el valor correcto
+            $codigoDesdeBD = \DB::table('articulos')->where('id', $articulo->id)->value('codigo');
+            
+            // Normalizar: convertir string vacío a null
+            if ($codigoDesdeBD === '') {
+                $codigoDesdeBD = null;
+            }
+            
+            // Si hay diferencia, usar el valor de la BD
+            if ($codigoDesdeBD !== $articulo->codigo) {
+                $articulo->codigo = $codigoDesdeBD;
+            }
             // Normalizar código antes de validar: si es string vacío o la palabra "null", convertir a null real
-            if ($request->has('codigo') && ($request->codigo === '' || $request->codigo === null || $request->codigo === 'null')) {
-                $request->merge(['codigo' => null]);
+            if ($request->has('codigo')) {
+                $codigoValue = $request->codigo;
+                if ($codigoValue === '' || $codigoValue === null || $codigoValue === 'null') {
+                    $request->merge(['codigo' => null]);
+                } else {
+                    // Normalizar trim del código
+                    $codigoValue = trim((string) $codigoValue);
+                    if ($codigoValue === '') {
+                        $request->merge(['codigo' => null]);
+                    } else {
+                        $request->merge(['codigo' => $codigoValue]);
+                    }
+                }
             }
 
-            // Obtener todos los datos del request
+            // Normalizar strings vacíos a null para campos opcionales
+            $allData = $request->all();
+            $nullableFields = ['precio_uno', 'precio_dos', 'precio_tres', 'precio_cuatro', 'descripcion', 'vencimiento'];
+            foreach ($nullableFields as $field) {
+                if (isset($allData[$field]) && $allData[$field] === '') {
+                    $request->merge([$field => null]);
+                    $allData[$field] = null;
+                }
+            }
+            
+            // Re-obtener los datos normalizados
             $allData = $request->all();
 
             // Validación flexible: solo validar campos que vienen en la petición y no son null
@@ -159,11 +194,20 @@ class ArticuloController extends Controller
                 $rules['industria_id'] = 'required|integer|exists:industrias,id';
             }
             if (array_key_exists('codigo', $allData)) {
+                // Normalizar el código del request (trim y convertir null/empty a null)
+                $codigoRequest = $allData['codigo'];
+                if ($codigoRequest !== null && $codigoRequest !== '') {
+                    $codigoRequest = trim((string) $codigoRequest);
+                    if ($codigoRequest === '') {
+                        $codigoRequest = null;
+                    }
+                }
+                
+                // Permitir códigos duplicados - solo validar formato, no unicidad
                 $rules['codigo'] = [
                     'nullable',
                     'string',
-                    'max:255',
-                    Rule::unique('articulos', 'codigo')->ignore($articulo->id)->whereNotNull('codigo')
+                    'max:255'
                 ];
             }
             if (isset($allData['nombre']) && $allData['nombre'] !== null) {
@@ -311,10 +355,22 @@ class ArticuloController extends Controller
                 'articulo_id' => $articulo->id,
                 'errors' => $e->errors(),
                 'request_data' => $request->all(),
-                'request_keys' => array_keys($request->all())
+                'request_keys' => array_keys($request->all()),
+                'codigo_actual' => $articulo->codigo,
+                'codigo_request' => $request->input('codigo')
             ]);
+            
+            // Obtener el primer error para mostrarlo claramente
+            $firstError = '';
+            $firstField = '';
+            foreach ($e->errors() as $field => $messages) {
+                $firstField = $field;
+                $firstError = is_array($messages) ? $messages[0] : $messages;
+                break;
+            }
+            
             return response()->json([
-                'message' => 'Error de validación',
+                'message' => $firstError ? "Error en el campo '{$firstField}': {$firstError}" : 'Error de validación',
                 'errors' => $e->errors(),
                 'request_keys' => array_keys($request->all())
             ], 422);
