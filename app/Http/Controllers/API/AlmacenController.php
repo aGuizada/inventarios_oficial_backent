@@ -115,17 +115,17 @@ class AlmacenController extends Controller
     {
         try {
             $almacen = Almacen::find($id);
-            
+
             if (!$almacen) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Almacén no encontrado'
                 ], 404);
             }
-            
+
             $almacenId = $almacen->id;
             $almacen->delete();
-            
+
             // Verificar que realmente se eliminó
             $verificar = Almacen::find($almacenId);
             if ($verificar) {
@@ -134,7 +134,7 @@ class AlmacenController extends Controller
                     'message' => 'Error: El almacén no se pudo eliminar'
                 ], 500);
             }
-            
+
             return response()->json([
                 'success' => true,
                 'message' => 'Almacén eliminado exitosamente'
@@ -145,5 +145,21 @@ class AlmacenController extends Controller
                 'message' => 'Error al eliminar el almacén: ' . $e->getMessage()
             ], 500);
         }
+    }
+
+    /**
+     * Toggle almacen status (active/inactive)
+     */
+    public function toggleStatus(Almacen $almacen)
+    {
+        $almacen->estado = !$almacen->estado;
+        $almacen->save();
+        $almacen->load('sucursal');
+
+        return response()->json([
+            'success' => true,
+            'message' => $almacen->estado ? 'Almacén activado' : 'Almacén desactivado',
+            'data' => $almacen
+        ]);
     }
 }

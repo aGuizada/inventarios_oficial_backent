@@ -73,4 +73,14 @@ class IndustriaController extends Controller
         $industria->delete();
         return response()->json(null, 204);
     }
+    public function toggleStatus(Industria $industria)
+    {
+        $industria->estado = !$industria->estado;
+        $industria->save();
+        return response()->json([
+            'success' => true,
+            'message' => $industria->estado ? 'Industria activada' : 'Industria desactivada',
+            'data' => $industria
+        ]);
+    }
 }

@@ -97,6 +97,21 @@ class UserController extends Controller
         $user->delete();
         return response()->json(null, 204);
     }
+
+    /**
+     * Toggle user status (active/inactive)
+     */
+    public function toggleStatus(User $user)
+    {
+        $user->estado = !$user->estado;
+        $user->save();
+
+        return response()->json([
+            'success' => true,
+            'message' => $user->estado ? 'Usuario activado' : 'Usuario desactivado',
+            'data' => $user->load(['rol', 'sucursal'])
+        ]);
+    }
     /**
      * Exporta usuarios a Excel
      */

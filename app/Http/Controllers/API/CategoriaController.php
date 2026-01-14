@@ -119,4 +119,18 @@ class CategoriaController extends Controller
         $categoria->delete();
         return response()->json(null, 204);
     }
+    public function toggleStatus($id)
+    {
+        $categoria = Categoria::find($id);
+        if (!$categoria) {
+            return response()->json(['success' => false, 'error' => 'Categoría no encontrada'], 404);
+        }
+        $categoria->estado = !$categoria->estado;
+        $categoria->save();
+        return response()->json([
+            'success' => true,
+            'message' => $categoria->estado ? 'Categoría activada' : 'Categoría desactivada',
+            'data' => $categoria
+        ]);
+    }
 }

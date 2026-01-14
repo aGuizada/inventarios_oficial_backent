@@ -73,4 +73,14 @@ class MarcaController extends Controller
         $marca->delete();
         return response()->json(null, 204);
     }
+    public function toggleStatus(Marca $marca)
+    {
+        $marca->estado = !$marca->estado;
+        $marca->save();
+        return response()->json([
+            'success' => true,
+            'message' => $marca->estado ? 'Marca activada' : 'Marca desactivada',
+            'data' => $marca
+        ]);
+    }
 }

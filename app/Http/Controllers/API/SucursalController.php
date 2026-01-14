@@ -100,12 +100,19 @@ class SucursalController extends Controller
         // IMPORTANTE: Solo actualizar campos que se enviaron explícitamente
         // Esto preserva los datos existentes del servidor que no se están actualizando
         $camposPermitidos = [
-            'empresa_id', 'nombre', 'codigoSucursal', 'direccion', 'correo', 
-            'telefono', 'departamento', 'estado', 'responsable'
+            'empresa_id',
+            'nombre',
+            'codigoSucursal',
+            'direccion',
+            'correo',
+            'telefono',
+            'departamento',
+            'estado',
+            'responsable'
         ];
-        
+
         $data = $request->only($camposPermitidos);
-        
+
         // Convertir estado a booleano si viene como string (solo si se envió)
         if (isset($data['estado'])) {
             if (is_string($data['estado'])) {
@@ -175,10 +182,31 @@ class SucursalController extends Controller
         }
 
         $sucursal->delete();
-        
+
         return response()->json([
             'success' => true,
             'message' => 'Sucursal eliminada exitosamente'
         ], 200);
+    }
+
+    /**
+     * Toggle sucursal status (active/inactive)
+     */
+    public function toggleStatus($id)
+    {
+        $sucursal = Sucursal::find($id);
+
+        if (!$sucursal) {
+            return response()->json(['success' => false, 'error' => 'Sucursal no encontrada'], 404);
+        }
+
+        $sucursal->estado = !$sucursal->estado;
+        $sucursal->save();
+
+        return response()->json([
+            'success' => true,
+            'message' => $sucursal->estado ? 'Sucursal activada' : 'Sucursal desactivada',
+            'data' => Sucursal::with('empresa')->find($id)
+        ]);
     }
 }

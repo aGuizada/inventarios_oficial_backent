@@ -188,4 +188,19 @@ class ProveedorController extends Controller
         $pdf->setPaper('a4', 'landscape');
         return $pdf->download('proveedores.pdf');
     }
+
+    /**
+     * Toggle proveedor status (active/inactive)
+     */
+    public function toggleStatus(Proveedor $proveedor)
+    {
+        $proveedor->estado = !$proveedor->estado;
+        $proveedor->save();
+
+        return response()->json([
+            'success' => true,
+            'message' => $proveedor->estado ? 'Proveedor activado' : 'Proveedor desactivado',
+            'data' => $proveedor
+        ]);
+    }
 }

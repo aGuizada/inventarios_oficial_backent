@@ -64,19 +64,22 @@ Route::middleware('auth:sanctum')->group(function () {
     // Usuarios
     Route::get('users/export-excel', [UserController::class, 'exportExcel']);
     Route::get('users/export-pdf', [UserController::class, 'exportPDF']);
+    Route::patch('users/{user}/toggle-status', [UserController::class, 'toggleStatus']);
     Route::apiResource('users', UserController::class);
 
     // Almacenes
+    Route::patch('almacenes/{almacen}/toggle-status', [AlmacenController::class, 'toggleStatus']);
     Route::apiResource('almacenes', AlmacenController::class);
 
     // Arqueos de Caja
     Route::apiResource('arqueos-caja', ArqueoCajaController::class);
 
     // Artículos
-    Route::get('articulos/template/download', [ArticuloController::class, 'downloadTemplate']);
+    Route::get('articulos/download-template', [ArticuloController::class, 'downloadTemplate']);
     Route::post('articulos/import', [ArticuloController::class, 'import']);
     Route::get('articulos/export-excel', [ArticuloController::class, 'exportExcel']);
     Route::get('articulos/export-pdf', [ArticuloController::class, 'exportPDF']);
+    Route::patch('articulos/{articulo}/toggle-status', [ArticuloController::class, 'toggleStatus']);
     Route::apiResource('articulos', ArticuloController::class);
 
     // Cajas
@@ -85,11 +88,13 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::apiResource('cajas', CajaController::class);
 
     // Categorías
+    Route::patch('categorias/{id}/toggle-status', [CategoriaController::class, 'toggleStatus']);
     Route::apiResource('categorias', CategoriaController::class);
 
     // Clientes
     Route::get('clientes/export-excel', [ClienteController::class, 'exportExcel']);
     Route::get('clientes/export-pdf', [ClienteController::class, 'exportPDF']);
+    Route::patch('clientes/{cliente}/toggle-status', [ClienteController::class, 'toggleStatus']);
     Route::apiResource('clientes', ClienteController::class);
 
     // Compras
@@ -121,6 +126,7 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::apiResource('empresas', EmpresaController::class);
 
     // Industrias
+    Route::patch('industrias/{industria}/toggle-status', [IndustriaController::class, 'toggleStatus']);
     Route::apiResource('industrias', IndustriaController::class);
 
     // Kardex
@@ -185,9 +191,11 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::apiResource('inventarios', InventarioController::class);
 
     // Marcas
+    Route::patch('marcas/{marca}/toggle-status', [MarcaController::class, 'toggleStatus']);
     Route::apiResource('marcas', MarcaController::class);
 
     // Medidas
+    Route::patch('medidas/{medida}/toggle-status', [MedidaController::class, 'toggleStatus']);
     Route::apiResource('medidas', MedidaController::class);
 
     // Monedas
@@ -208,12 +216,14 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::post('proveedores/import', [ProveedorController::class, 'import']);
     Route::get('proveedores/export-excel', [ProveedorController::class, 'exportExcel']);
     Route::get('proveedores/export-pdf', [ProveedorController::class, 'exportPDF']);
+    Route::patch('proveedores/{proveedor}/toggle-status', [ProveedorController::class, 'toggleStatus']);
     Route::apiResource('proveedores', ProveedorController::class);
 
     // Roles
     Route::apiResource('roles', RolController::class);
 
     // Sucursales
+    Route::patch('sucursales/{sucursal}/toggle-status', [SucursalController::class, 'toggleStatus']);
     Route::apiResource('sucursales', SucursalController::class);
 
     // Tipos de Pago

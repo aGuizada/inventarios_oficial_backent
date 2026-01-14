@@ -89,6 +89,21 @@ class ClienteController extends Controller
         $cliente->delete();
         return response()->json(null, 204);
     }
+
+    /**
+     * Toggle client status (active/inactive)
+     */
+    public function toggleStatus(Cliente $cliente)
+    {
+        $cliente->estado = !$cliente->estado;
+        $cliente->save();
+
+        return response()->json([
+            'success' => true,
+            'message' => $cliente->estado ? 'Cliente activado' : 'Cliente desactivado',
+            'data' => $cliente
+        ]);
+    }
     /**
      * Exporta clientes a Excel
      */

@@ -31,7 +31,7 @@ class ArticuloController extends Controller
     {
         if ($articulo->fotografia) {
             $baseUrl = rtrim(config('app.url'), '/');
-            
+
             // Si ya tiene ruta completa (compatibilidad con datos antiguos)
             if (strpos($articulo->fotografia, '/') !== false) {
                 // Extraer solo el nombre del archivo
@@ -92,7 +92,7 @@ class ArticuloController extends Controller
 
             // Aplicar paginación (sin límite máximo para catálogo)
             $response = $this->paginateResponse($query, $request, 15, 999999);
-            
+
             // Agregar URLs de imágenes usando el método existente addImageUrl
             if ($response->getStatusCode() === 200) {
                 $responseData = json_decode($response->getContent(), true);
@@ -100,15 +100,15 @@ class ArticuloController extends Controller
                     // Procesar cada artículo usando addImageUrl (mismo método que usan show, store, update)
                     foreach ($responseData['data']['data'] as &$articulo) {
                         // Convertir array a objeto temporal para usar addImageUrl
-                        $articuloObj = (object)$articulo;
+                        $articuloObj = (object) $articulo;
                         $this->addImageUrl($articuloObj);
                         // Convertir de vuelta a array y preservar fotografia_url
-                        $articulo = (array)$articuloObj;
+                        $articulo = (array) $articuloObj;
                     }
                     return response()->json($responseData);
                 }
             }
-            
+
             return $response;
         } catch (\Exception $e) {
             return response()->json([
@@ -183,7 +183,7 @@ class ArticuloController extends Controller
 
                     // Guardar la imagen usando Storage (mejor práctica que copy/move)
                     $saved = $file->storeAs($directory, $filename, 'public');
-                    
+
                     if (!$saved) {
                         \Log::error('Error al guardar imagen', ['filename' => $filename]);
                         throw new \Exception('Error al guardar la imagen');
@@ -220,7 +220,7 @@ class ArticuloController extends Controller
 
             $articulo = Articulo::create($data);
             $articulo->load(['categoria', 'proveedor', 'medida', 'marca', 'industria']);
-            
+
             // Agregar URL completa de la imagen
             $this->addImageUrl($articulo);
 
@@ -241,10 +241,10 @@ class ArticuloController extends Controller
     public function show(Articulo $articulo)
     {
         $articulo->load(['categoria', 'proveedor', 'medida', 'marca', 'industria']);
-        
+
         // Agregar URL completa de la imagen
         $this->addImageUrl($articulo);
-        
+
         return response()->json($articulo);
     }
 
@@ -253,15 +253,15 @@ class ArticuloController extends Controller
         try {
             // Asegurar que el artículo esté cargado con el código actual desde la BD
             $articulo->refresh();
-            
+
             // Verificar el código directamente desde la BD para asegurar que tenemos el valor correcto
             $codigoDesdeBD = \DB::table('articulos')->where('id', $articulo->id)->value('codigo');
-            
+
             // Normalizar: convertir string vacío a null
             if ($codigoDesdeBD === '') {
                 $codigoDesdeBD = null;
             }
-            
+
             // Si hay diferencia, usar el valor de la BD
             if ($codigoDesdeBD !== $articulo->codigo) {
                 $articulo->codigo = $codigoDesdeBD;
@@ -291,10 +291,10 @@ class ArticuloController extends Controller
                     $allData[$field] = null;
                 }
             }
-            
+
             // Re-obtener los datos normalizados
             $allData = $request->all();
-            
+
             // Log para debugging
             \Log::info('Datos recibidos en update', [
                 'all_data' => $allData,
@@ -329,7 +329,7 @@ class ArticuloController extends Controller
                         $codigoRequest = null;
                     }
                 }
-                
+
                 // Permitir códigos duplicados - solo validar formato, no unicidad
                 $rules['codigo'] = [
                     'nullable',
@@ -452,7 +452,7 @@ class ArticuloController extends Controller
 
                     // Guardar la imagen usando Storage
                     $saved = $file->storeAs($directory, $filename, 'public');
-                    
+
                     if (!$saved) {
                         \Log::error('Error al guardar imagen en update', ['filename' => $filename]);
                         throw new \Exception('Error al guardar la imagen');
@@ -479,20 +479,37 @@ class ArticuloController extends Controller
             // Esto preserva los datos existentes del servidor que no se están actualizando
             // Usar $request->only() para obtener solo los campos que se enviaron explícitamente
             $camposPermitidos = [
-                'categoria_id', 'proveedor_id', 'medida_id', 'marca_id', 'industria_id',
-                'codigo', 'nombre', 'unidad_envase', 'precio_costo_unid', 'precio_costo_paq',
-                'precio_venta', 'precio_uno', 'precio_dos', 'precio_tres', 'precio_cuatro',
-                'stock', 'descripcion', 'costo_compra', 'vencimiento', 'fotografia', 'estado'
+                'categoria_id',
+                'proveedor_id',
+                'medida_id',
+                'marca_id',
+                'industria_id',
+                'codigo',
+                'nombre',
+                'unidad_envase',
+                'precio_costo_unid',
+                'precio_costo_paq',
+                'precio_venta',
+                'precio_uno',
+                'precio_dos',
+                'precio_tres',
+                'precio_cuatro',
+                'stock',
+                'descripcion',
+                'costo_compra',
+                'vencimiento',
+                'fotografia',
+                'estado'
             ];
-            
+
             // Obtener solo los campos que fueron enviados explícitamente en el request
             $dataToUpdate = $request->only($camposPermitidos);
-            
+
             // Si se procesó una nueva fotografía, agregarla al array de actualización
             if (isset($fotografiaFilename)) {
                 $dataToUpdate['fotografia'] = $fotografiaFilename;
             }
-            
+
             // Normalizar campos numéricos (solo los que se enviaron)
             $numericFields = ['categoria_id', 'proveedor_id', 'medida_id', 'marca_id', 'industria_id', 'unidad_envase', 'stock', 'vencimiento'];
             foreach ($numericFields as $field) {
@@ -522,29 +539,29 @@ class ArticuloController extends Controller
             if (isset($dataToUpdate['codigo']) && $dataToUpdate['codigo'] === '') {
                 $dataToUpdate['codigo'] = null;
             }
-            
+
             // Filtrar valores null, pero mantener 0 y false
             $dataToUpdate = array_filter($dataToUpdate, function ($value, $key) {
                 // Permitir codigo null si se envió explícitamente
                 if ($key === 'codigo') {
                     return true;
                 }
-                
+
                 // Permitir fotografia solo si fue procesada (tiene valor)
                 if ($key === 'fotografia') {
                     return $value !== null;
                 }
-                
+
                 // Para otros campos: solo incluir si tienen valor (no null)
                 return $value !== null;
             }, ARRAY_FILTER_USE_BOTH);
-            
+
             // Usar solo los campos que se enviaron para actualizar
             $data = $dataToUpdate;
 
             $articulo->update($data);
             $articulo->load(['categoria', 'proveedor', 'medida', 'marca', 'industria']);
-            
+
             // Agregar URL completa de la imagen
             $this->addImageUrl($articulo);
 
@@ -561,7 +578,7 @@ class ArticuloController extends Controller
                 'estado_tipo' => gettype($request->input('estado')),
                 'codigo_request' => $request->input('codigo')
             ]);
-            
+
             // Retornar los errores de validación en formato JSON
             return response()->json([
                 'message' => 'Error de validación',
@@ -574,7 +591,7 @@ class ArticuloController extends Controller
                 $firstError = is_array($messages) ? $messages[0] : $messages;
                 break;
             }
-            
+
             return response()->json([
                 'message' => $firstError ? "Error en el campo '{$firstField}': {$firstError}" : 'Error de validación',
                 'errors' => $e->errors(),
@@ -699,11 +716,11 @@ class ArticuloController extends Controller
                 'line' => $e->getLine(),
                 'trace' => $e->getTraceAsString()
             ]);
-            
+
             // Intentar obtener el conteo de importados incluso si hubo un error
             $importedCount = isset($import) ? $import->getImportedCount() : 0;
             $skippedCount = isset($import) ? $import->getSkippedCount() : 0;
-            
+
             return response()->json([
                 'message' => 'Error al procesar el archivo',
                 'data' => [
@@ -731,5 +748,18 @@ class ArticuloController extends Controller
         $pdf = Pdf::loadView('pdf.articulos', compact('articulos'));
         $pdf->setPaper('a4', 'landscape');
         return $pdf->download('articulos.pdf');
+    }
+    public function toggleStatus(Articulo $articulo)
+    {
+        $articulo->estado = !$articulo->estado;
+        $articulo->save();
+        $articulo->load(['categoria', 'proveedor', 'medida', 'marca', 'industria']);
+        $this->addImageUrl($articulo);
+
+        return response()->json([
+            'success' => true,
+            'message' => $articulo->estado ? 'Artículo activado' : 'Artículo desactivado',
+            'data' => $articulo
+        ]);
     }
 }

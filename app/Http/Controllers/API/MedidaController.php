@@ -73,4 +73,14 @@ class MedidaController extends Controller
         $medida->delete();
         return response()->json(null, 204);
     }
+    public function toggleStatus(Medida $medida)
+    {
+        $medida->estado = !$medida->estado;
+        $medida->save();
+        return response()->json([
+            'success' => true,
+            'message' => $medida->estado ? 'Medida activada' : 'Medida desactivada',
+            'data' => $medida
+        ]);
+    }
 }
