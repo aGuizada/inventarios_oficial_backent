@@ -37,7 +37,7 @@ use App\Http\Controllers\API\TransaccionCajaController;
 use App\Http\Controllers\API\TraspasoController;
 use App\Http\Controllers\API\VentaController;
 use App\Http\Controllers\API\DashboardController;
-use App\Http\Controllers\API\ImageController;
+
 
 /*
 |--------------------------------------------------------------------------
@@ -55,6 +55,10 @@ Route::prefix('auth')->group(function () {
     Route::post('/register', [AuthController::class, 'register']);
     Route::post('/login', [AuthController::class, 'login']);
 });
+
+// Ruta pública para servir imágenes de artículos (sin necesidad de storage link)
+Route::get('articulos/imagen/{filename}', [ArticuloController::class, 'serveImage'])
+    ->where('filename', '.*');
 
 // Rutas protegidas (requieren autenticación)
 Route::middleware('auth:sanctum')->group(function () {
@@ -270,7 +274,3 @@ Route::get('/health', function () {
         'timestamp' => now()->toDateTimeString()
     ]);
 });
-
-// Ruta pública para servir imágenes de artículos (fallback si el enlace simbólico no funciona)
-Route::get('/images/articulos/{filename}', [ImageController::class, 'serveArticuloImage'])
-    ->where('filename', '.*');
