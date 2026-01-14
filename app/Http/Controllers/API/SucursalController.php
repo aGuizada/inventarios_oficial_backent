@@ -97,8 +97,16 @@ class SucursalController extends Controller
             'responsable' => 'nullable|string|max:255',
         ]);
 
-        // Convertir estado a booleano si viene como string
-        $data = $request->all();
+        // IMPORTANTE: Solo actualizar campos que se enviaron explícitamente
+        // Esto preserva los datos existentes del servidor que no se están actualizando
+        $camposPermitidos = [
+            'empresa_id', 'nombre', 'codigoSucursal', 'direccion', 'correo', 
+            'telefono', 'departamento', 'estado', 'responsable'
+        ];
+        
+        $data = $request->only($camposPermitidos);
+        
+        // Convertir estado a booleano si viene como string (solo si se envió)
         if (isset($data['estado'])) {
             if (is_string($data['estado'])) {
                 $data['estado'] = filter_var($data['estado'], FILTER_VALIDATE_BOOLEAN);

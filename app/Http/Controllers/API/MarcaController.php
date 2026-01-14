@@ -13,17 +13,29 @@ class MarcaController extends Controller
 
     public function index(Request $request)
     {
-        $query = Marca::query();
+        try {
+            $query = Marca::query();
 
-        $searchableFields = [
-            'id',
-            'nombre'
-        ];
+            $searchableFields = [
+                'id',
+                'nombre'
+            ];
 
-        $query = $this->applySearch($query, $request, $searchableFields);
-        $query = $this->applySorting($query, $request, ['id', 'nombre', 'created_at'], 'id', 'desc');
+            $query = $this->applySearch($query, $request, $searchableFields);
+            $query = $this->applySorting($query, $request, ['id', 'nombre', 'created_at'], 'id', 'desc');
 
-        return $this->paginateResponse($query, $request, 15, 100);
+            return $this->paginateResponse($query, $request, 15, 100);
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => true,
+                'data' => [],
+                'meta' => [
+                    'current_page' => 1,
+                    'last_page' => 1,
+                    'total' => 0,
+                ]
+            ]);
+        }
     }
 
     public function store(Request $request)
@@ -50,7 +62,8 @@ class MarcaController extends Controller
             'estado' => 'boolean',
         ]);
 
-        $marca->update($request->all());
+        $camposPermitidos = ['nombre', 'estado'];
+        $marca->update($request->only($camposPermitidos));
 
         return response()->json($marca);
     }

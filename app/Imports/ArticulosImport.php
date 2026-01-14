@@ -47,8 +47,13 @@ class ArticulosImport implements ToModel, WithHeadingRow, WithValidation, SkipsO
         
         // Leer código y nombre directamente del Excel
         // El código puede ser null - no es obligatorio
-        $nombreRaw = trim($row['nombre'] ?? '');
-        $codigoRaw = trim($row['codigo'] ?? '');
+        // Buscar nombre de manera flexible (case-insensitive y con variaciones)
+        $nombreRaw = $this->getColumnValue($row, ['nombre', 'Nombre', 'NOMBRE', 'producto', 'Producto', 'PRODUCTO', 'descripcion', 'Descripcion']);
+        $codigoRaw = $this->getColumnValue($row, ['codigo', 'Codigo', 'CODIGO', 'código', 'Código', 'CÓDIGO', 'sku', 'SKU', 'Sku']);
+        
+        // Normalizar valores
+        $nombreRaw = trim($nombreRaw ?? '');
+        $codigoRaw = trim($codigoRaw ?? '');
         
         // Si la fila está completamente vacía (sin nombre ni código ni otros datos), omitirla
         $tieneDatos = false;
@@ -67,12 +72,16 @@ class ArticulosImport implements ToModel, WithHeadingRow, WithValidation, SkipsO
             return null; // Omitir solo filas completamente vacías
         }
         
-        \Log::debug('Procesando fila', [
-            'fila_numero' => $this->totalRows,
-            'nombre' => $nombreRaw ?: 'N/A',
-            'codigo' => $codigoRaw ?: 'N/A (null permitido)',
-            'total_procesadas' => $this->totalRows
-        ]);
+        // Log detallado de lo que se está leyendo (solo para las primeras 5 filas para no saturar logs)
+        if ($this->totalRows <= 5) {
+            \Log::info('Procesando fila de importación', [
+                'fila_numero' => $this->totalRows,
+                'nombre_encontrado' => $nombreRaw ?: 'NO ENCONTRADO',
+                'codigo_encontrado' => $codigoRaw ?: 'NO ENCONTRADO (null permitido)',
+                'columnas_disponibles_en_excel' => array_keys($row),
+                'valores_de_columnas' => $row
+            ]);
+        }
         
         // El código puede ser null - no es obligatorio
         // Si no hay nombre, usar código como nombre o generar uno por defecto
@@ -736,6 +745,41 @@ class ArticulosImport implements ToModel, WithHeadingRow, WithValidation, SkipsO
         $lower = mb_strtolower($ascii);
 
         return in_array($lower, ['n/a', 'na', 'no aplica'], true) ? null : $lower;
+    }
+
+    /**
+     * Busca un valor en el array de fila probando múltiples nombres de columna
+     * Útil para manejar variaciones en los nombres de columnas del Excel
+     *
+     * @param array $row
+     * @param array $possibleNames Array de posibles nombres de columna a buscar
+     * @return string|null
+     */
+    protected function getColumnValue(array $row, array $possibleNames): ?string
+    {
+        // Primero intentar búsqueda exacta
+        foreach ($possibleNames as $name) {
+            if (isset($row[$name]) && !empty(trim($row[$name] ?? ''))) {
+                return $row[$name];
+            }
+        }
+
+        // Si no se encuentra, buscar de manera case-insensitive
+        $rowKeys = array_keys($row);
+        foreach ($possibleNames as $name) {
+            $nameLower = mb_strtolower(trim($name));
+            foreach ($rowKeys as $key) {
+                $keyLower = mb_strtolower(trim($key));
+                // Comparar sin espacios y case-insensitive
+                if (str_replace(' ', '', $keyLower) === str_replace(' ', '', $nameLower)) {
+                    if (!empty(trim($row[$key] ?? ''))) {
+                        return $row[$key];
+                    }
+                }
+            }
+        }
+
+        return null;
     }
 
     protected function getDefaultProveedorId(): ?int

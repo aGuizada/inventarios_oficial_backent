@@ -15,6 +15,7 @@ use App\Models\Kardex; // Added Kardex use statement
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\Storage;
 use Illuminate\Validation\ValidationException;
 use App\Notifications\LowStockNotification;
 use App\Notifications\OutOfStockNotification;
@@ -31,6 +32,37 @@ class VentaController extends Controller
     public function __construct(\App\Services\KardexService $kardexService)
     {
         $this->kardexService = $kardexService;
+    }
+
+    /**
+     * Agrega la URL completa de la imagen al artículo
+     * La fotografia se guarda solo como nombre de archivo, no como ruta completa
+     */
+    private function addImageUrl($articulo)
+    {
+        if ($articulo->fotografia) {
+            $baseUrl = rtrim(config('app.url'), '/');
+            
+            // Si ya tiene ruta completa (compatibilidad con datos antiguos)
+            if (strpos($articulo->fotografia, '/') !== false) {
+                // Intentar primero con la ruta estándar de storage
+                $storagePath = '/storage/' . ltrim($articulo->fotografia, '/');
+                $articulo->fotografia_url = $baseUrl . $storagePath;
+            } else {
+                // Solo nombre de archivo (nueva lógica)
+                // Intentar primero con la ruta estándar de storage
+                $storagePath = '/storage/articulos/' . $articulo->fotografia;
+                $articulo->fotografia_url = $baseUrl . $storagePath;
+                
+                // Fallback: usar endpoint de API si el enlace simbólico no funciona
+                // El frontend puede verificar si la imagen falla y usar esta URL alternativa
+                $articulo->fotografia_url_fallback = $baseUrl . '/api/images/articulos/' . $articulo->fotografia;
+            }
+        } else {
+            $articulo->fotografia_url = null;
+            $articulo->fotografia_url_fallback = null;
+        }
+        return $articulo;
     }
 
     /**
@@ -139,53 +171,74 @@ class VentaController extends Controller
      */
     public function productosInventario(Request $request)
     {
-        $almacenId = $request->get('almacen_id');
-        $incluirSinStock = $request->get('incluir_sin_stock', false);
+        try {
+            $almacenId = $request->get('almacen_id');
+            $incluirSinStock = $request->get('incluir_sin_stock', false);
 
-        $query = Inventario::with([
-            'articulo.categoria',
-            'articulo.marca',
-            'articulo.medida',
-            'articulo.industria',
-            'articulo.proveedor',
-            'almacen'
-        ]);
+            // Optimizar carga de relaciones: solo cargar campos necesarios
+            // Nota: No usar select() en el modelo principal para evitar problemas con relaciones
+            $query = Inventario::with([
+                'articulo' => function ($q) {
+                    $q->select('id', 'nombre', 'codigo', 'precio_venta', 'precio_uno', 'precio_dos', 'precio_tres', 'precio_cuatro', 'precio_costo_unid', 'precio_costo_paq', 'categoria_id', 'marca_id', 'medida_id', 'industria_id', 'proveedor_id', 'fotografia');
+                },
+                'articulo.categoria:id,nombre',
+                'articulo.marca:id,nombre',
+                'articulo.medida:id,nombre_medida',
+                'articulo.industria:id,nombre',
+                'articulo.proveedor:id,nombre',
+                'almacen:id,nombre_almacen,sucursal_id'
+            ]);
 
-        // Por defecto, solo mostrar productos con stock > 0
-        // Usar comparación con decimales: > 0.0001 para incluir valores como 0.50
-        if (!$incluirSinStock) {
-            $query->where('saldo_stock', '>', 0.0001);
-        }
+            // Por defecto, solo mostrar productos con stock > 0
+            // Usar comparación con decimales: > 0.0001 para incluir valores como 0.50
+            if (!$incluirSinStock) {
+                $query->where('saldo_stock', '>', 0.0001);
+            }
 
-        if ($almacenId) {
-            $query->where('almacen_id', $almacenId);
-        }
+            if ($almacenId) {
+                $query->where('almacen_id', $almacenId);
+            }
 
-        if ($request->has('categoria_id')) {
-            $categoriaId = $request->categoria_id;
-            $query->whereHas('articulo', function ($q) use ($categoriaId) {
-                $q->where('categoria_id', $categoriaId);
-            });
-        }
+            // Filtrar por sucursal si se envía (a través del almacén)
+            if ($request->has('sucursal_id')) {
+                $sucursalId = $request->sucursal_id;
+                $query->whereHas('almacen', function ($q) use ($sucursalId) {
+                    $q->where('sucursal_id', $sucursalId);
+                });
+            }
 
-        // Aplicar búsqueda si existe
-        $searchableFields = [
-            'articulo.nombre',
-            'articulo.codigo',
-            'articulo.marca.nombre',
-            'articulo.categoria.nombre'
-        ];
-        $query = $this->applySearch($query, $request, $searchableFields);
+            if ($request->has('categoria_id')) {
+                $categoriaId = $request->categoria_id;
+                $query->whereHas('articulo', function ($q) use ($categoriaId) {
+                    $q->where('categoria_id', $categoriaId);
+                });
+            }
 
-        // Aplicar ordenamiento
-        $query = $this->applySorting($query, $request, ['id', 'saldo_stock'], 'id', 'desc');
+            // Aplicar búsqueda si existe
+            $searchableFields = [
+                'articulo.nombre',
+                'articulo.codigo',
+                'articulo.marca.nombre',
+                'articulo.categoria.nombre'
+            ];
+            $query = $this->applySearch($query, $request, $searchableFields);
+
+            // Aplicar ordenamiento
+            $query = $this->applySorting($query, $request, ['id', 'saldo_stock'], 'id', 'desc');
 
         // Si se solicita paginación
         if ($request->has('per_page') || $request->has('page')) {
-            $perPage = min((int) $request->get('per_page', 24), 100);
+            // Aumentar el límite máximo para catálogo (cuando se solicita incluir_sin_stock)
+            $maxPerPage = $incluirSinStock ? 10000 : 100;
+            $perPage = min((int) $request->get('per_page', 24), $maxPerPage);
             $paginated = $query->paginate($perPage);
 
             $paginated->getCollection()->transform(function ($inventario) {
+                // Usar el mismo método que ArticuloController
+                if ($inventario->articulo) {
+                    $this->addImageUrl($inventario->articulo);
+                }
+                
                 return [
                     'inventario_id' => $inventario->id,
                     'articulo_id' => $inventario->articulo_id,
@@ -213,6 +266,11 @@ class VentaController extends Controller
         $inventarios = $query->get();
 
         $productos = $inventarios->map(function ($inventario) {
+            // Usar el mismo método que ArticuloController
+            if ($inventario->articulo) {
+                $this->addImageUrl($inventario->articulo);
+            }
+            
             return [
                 'inventario_id' => $inventario->id,
                 'articulo_id' => $inventario->articulo_id,
@@ -225,6 +283,13 @@ class VentaController extends Controller
         });
 
         return response()->json($productos);
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Error al cargar productos del inventario: ' . $e->getMessage(),
+                'data' => []
+            ], 500);
+        }
     }
 
     public function store(Request $request)

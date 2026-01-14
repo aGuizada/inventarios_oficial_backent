@@ -40,7 +40,8 @@ class PrecioController extends Controller
             'estado' => 'boolean',
         ]);
 
-        $precio->update($request->all());
+        $camposPermitidos = ['nombre_precio', 'porcentaje', 'estado'];
+        $precio->update($request->only($camposPermitidos));
 
         return response()->json($precio);
     }

@@ -73,7 +73,12 @@ class InventarioController extends Controller
             'ubicacion' => 'nullable|string|max:100',
         ]);
 
-        $inventario->update($request->all());
+        // IMPORTANTE: Solo actualizar campos que se enviaron explícitamente
+        // Esto preserva los datos existentes del servidor que no se están actualizando
+        $camposPermitidos = ['almacen_id', 'articulo_id', 'cantidad', 'ubicacion'];
+        $data = $request->only($camposPermitidos);
+
+        $inventario->update($data);
 
         return response()->json($inventario);
     }

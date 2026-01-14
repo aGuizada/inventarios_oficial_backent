@@ -74,7 +74,12 @@ class ClienteController extends Controller
             'estado' => 'boolean',
         ]);
 
-        $cliente->update($request->all());
+        // IMPORTANTE: Solo actualizar campos que se enviaron explícitamente
+        // Esto preserva los datos existentes del servidor que no se están actualizando
+        $camposPermitidos = ['nombre', 'telefono', 'direccion', 'email', 'nit', 'tipo_cliente', 'estado'];
+        $data = $request->only($camposPermitidos);
+
+        $cliente->update($data);
 
         return response()->json($cliente);
     }

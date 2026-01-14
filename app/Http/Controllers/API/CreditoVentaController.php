@@ -294,7 +294,11 @@ class CreditoVentaController extends Controller
             'proximo_pago' => 'nullable|date',
         ]);
 
-        $creditoVenta->update($request->all());
+        $camposPermitidos = [
+            'venta_id', 'cliente_id', 'fecha_inicio', 'numero_cuotas',
+            'tiempo_dias_cuota', 'total', 'estado', 'proximo_pago'
+        ];
+        $creditoVenta->update($request->only($camposPermitidos));
 
         return response()->json($creditoVenta);
     }

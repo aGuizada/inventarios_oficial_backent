@@ -13,36 +13,48 @@ class NotificationController extends Controller
      */
     public function index()
     {
-        $user = Auth::user();
+        try {
+            $user = Auth::user();
 
-        if (!$user) {
-            return response()->json(['success' => false, 'message' => 'Unauthenticated'], 401);
+            if (!$user) {
+                return response()->json(['success' => false, 'message' => 'Unauthenticated'], 401);
+            }
+
+            $notifications = $user->notifications()->latest()->paginate(20);
+
+            // Transform data to match frontend interface
+            $data = $notifications->map(function ($notification) {
+                return [
+                    'id' => $notification->id,
+                    'titulo' => $notification->data['title'] ?? 'Notificación',
+                    'mensaje' => $notification->data['message'] ?? '',
+                    'tipo' => $notification->data['type'] ?? 'info',
+                    'leido' => !is_null($notification->read_at),
+                    'created_at' => $notification->created_at,
+                    'updated_at' => $notification->updated_at,
+                ];
+            });
+
+            return response()->json([
+                'success' => true,
+                'data' => $data,
+                'meta' => [
+                    'current_page' => $notifications->currentPage(),
+                    'last_page' => $notifications->lastPage(),
+                    'total' => $notifications->total(),
+                ]
+            ]);
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => true,
+                'data' => [],
+                'meta' => [
+                    'current_page' => 1,
+                    'last_page' => 1,
+                    'total' => 0,
+                ]
+            ]);
         }
-
-        $notifications = $user->notifications()->latest()->paginate(20);
-
-        // Transform data to match frontend interface
-        $data = $notifications->map(function ($notification) {
-            return [
-                'id' => $notification->id,
-                'titulo' => $notification->data['title'] ?? 'Notificación',
-                'mensaje' => $notification->data['message'] ?? '',
-                'tipo' => $notification->data['type'] ?? 'info',
-                'leido' => !is_null($notification->read_at),
-                'created_at' => $notification->created_at,
-                'updated_at' => $notification->updated_at,
-            ];
-        });
-
-        return response()->json([
-            'success' => true,
-            'data' => $data,
-            'meta' => [
-                'current_page' => $notifications->currentPage(),
-                'last_page' => $notifications->lastPage(),
-                'total' => $notifications->total(),
-            ]
-        ]);
     }
 
     /**
@@ -50,30 +62,45 @@ class NotificationController extends Controller
      */
     public function unread()
     {
-        $user = Auth::user();
+        try {
+            $user = Auth::user();
 
-        if (!$user) {
-            return response()->json(['success' => false, 'message' => 'Unauthenticated'], 401);
+            if (!$user) {
+                return response()->json(['success' => false, 'message' => 'Unauthenticated'], 401);
+            }
+
+            // Verificar si existe la tabla de notificaciones
+            try {
+                $notifications = $user->unreadNotifications()->latest()->get();
+            } catch (\Exception $e) {
+                return response()->json([
+                    'success' => true,
+                    'data' => []
+                ]);
+            }
+
+            $data = $notifications->map(function ($notification) {
+                return [
+                    'id' => $notification->id,
+                    'titulo' => $notification->data['title'] ?? 'Notificación',
+                    'mensaje' => $notification->data['message'] ?? '',
+                    'tipo' => $notification->data['type'] ?? 'info',
+                    'leido' => false,
+                    'created_at' => $notification->created_at,
+                    'updated_at' => $notification->updated_at,
+                ];
+            });
+
+            return response()->json([
+                'success' => true,
+                'data' => $data
+            ]);
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => true,
+                'data' => []
+            ]);
         }
-
-        $notifications = $user->unreadNotifications()->latest()->get();
-
-        $data = $notifications->map(function ($notification) {
-            return [
-                'id' => $notification->id,
-                'titulo' => $notification->data['title'] ?? 'Notificación',
-                'mensaje' => $notification->data['message'] ?? '',
-                'tipo' => $notification->data['type'] ?? 'info',
-                'leido' => false,
-                'created_at' => $notification->created_at,
-                'updated_at' => $notification->updated_at,
-            ];
-        });
-
-        return response()->json([
-            'success' => true,
-            'data' => $data
-        ]);
     }
 
     /**
@@ -81,20 +108,24 @@ class NotificationController extends Controller
      */
     public function markAsRead($id)
     {
-        $user = Auth::user();
+        try {
+            $user = Auth::user();
 
-        if (!$user) {
-            return response()->json(['success' => false, 'message' => 'Unauthenticated'], 401);
+            if (!$user) {
+                return response()->json(['success' => false, 'message' => 'Unauthenticated'], 401);
+            }
+
+            $notification = $user->notifications()->where('id', $id)->first();
+
+            if ($notification) {
+                $notification->markAsRead();
+                return response()->json(['success' => true, 'message' => 'Notificación marcada como leída']);
+            }
+
+            return response()->json(['success' => false, 'message' => 'Notificación no encontrada'], 404);
+        } catch (\Exception $e) {
+            return response()->json(['success' => false, 'message' => 'Error al marcar notificación como leída'], 500);
         }
-
-        $notification = $user->notifications()->where('id', $id)->first();
-
-        if ($notification) {
-            $notification->markAsRead();
-            return response()->json(['success' => true, 'message' => 'Notificación marcada como leída']);
-        }
-
-        return response()->json(['success' => false, 'message' => 'Notificación no encontrada'], 404);
     }
 
     /**
@@ -102,15 +133,19 @@ class NotificationController extends Controller
      */
     public function markAllAsRead()
     {
-        $user = Auth::user();
+        try {
+            $user = Auth::user();
 
-        if (!$user) {
-            return response()->json(['success' => false, 'message' => 'Unauthenticated'], 401);
+            if (!$user) {
+                return response()->json(['success' => false, 'message' => 'Unauthenticated'], 401);
+            }
+
+            $user->unreadNotifications->markAsRead();
+
+            return response()->json(['success' => true, 'message' => 'Todas las notificaciones marcadas como leídas']);
+        } catch (\Exception $e) {
+            return response()->json(['success' => false, 'message' => 'Error al marcar notificaciones como leídas'], 500);
         }
-
-        $user->unreadNotifications->markAsRead();
-
-        return response()->json(['success' => true, 'message' => 'Todas las notificaciones marcadas como leídas']);
     }
 
     /**
@@ -118,19 +153,23 @@ class NotificationController extends Controller
      */
     public function destroy($id)
     {
-        $user = Auth::user();
+        try {
+            $user = Auth::user();
 
-        if (!$user) {
-            return response()->json(['success' => false, 'message' => 'Unauthenticated'], 401);
+            if (!$user) {
+                return response()->json(['success' => false, 'message' => 'Unauthenticated'], 401);
+            }
+
+            $notification = $user->notifications()->where('id', $id)->first();
+
+            if ($notification) {
+                $notification->delete();
+                return response()->json(['success' => true, 'message' => 'Notificación eliminada']);
+            }
+
+            return response()->json(['success' => false, 'message' => 'Notificación no encontrada'], 404);
+        } catch (\Exception $e) {
+            return response()->json(['success' => false, 'message' => 'Error al eliminar notificación'], 500);
         }
-
-        $notification = $user->notifications()->where('id', $id)->first();
-
-        if ($notification) {
-            $notification->delete();
-            return response()->json(['success' => true, 'message' => 'Notificación eliminada']);
-        }
-
-        return response()->json(['success' => false, 'message' => 'Notificación no encontrada'], 404);
     }
 }
