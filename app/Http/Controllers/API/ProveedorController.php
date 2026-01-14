@@ -76,7 +76,12 @@ class ProveedorController extends Controller
             'estado' => 'boolean',
         ]);
 
-        $proveedor->update($request->all());
+        // IMPORTANTE: Solo actualizar campos que se enviaron explícitamente
+        // Esto preserva los datos existentes del servidor que no se están actualizando
+        $camposPermitidos = ['nombre', 'telefono', 'direccion', 'email', 'nit', 'tipo_proveedor', 'estado'];
+        $data = $request->only($camposPermitidos);
+
+        $proveedor->update($data);
 
         return response()->json($proveedor);
     }

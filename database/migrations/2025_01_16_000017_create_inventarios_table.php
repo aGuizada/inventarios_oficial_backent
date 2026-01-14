@@ -12,8 +12,8 @@ return new class extends Migration {
             $table->integer('almacen_id')->unsigned();
             $table->integer('articulo_id')->unsigned();
             $table->date('fecha_vencimiento')->default('2099-01-01');
-            $table->integer('saldo_stock');
-            $table->integer('cantidad');
+            $table->decimal('saldo_stock', 11, 3)->default(0);
+            $table->decimal('cantidad', 11, 3)->default(0);
             $table->timestamps();
 
             $table->foreign('almacen_id')->references('id')->on('almacenes')->onDelete('cascade')->onUpdate('cascade');

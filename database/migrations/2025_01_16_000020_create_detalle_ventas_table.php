@@ -11,7 +11,7 @@ return new class extends Migration {
             $table->increments('id');
             $table->unsignedBigInteger('venta_id');
             $table->integer('articulo_id')->unsigned();
-            $table->integer('cantidad');
+            $table->decimal('cantidad', 11, 3);
             $table->decimal('precio', 11, 2);
             $table->decimal('descuento', 11, 2)->default(0.00);
 

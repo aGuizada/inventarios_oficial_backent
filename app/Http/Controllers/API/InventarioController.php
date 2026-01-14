@@ -18,7 +18,7 @@ class InventarioController extends Controller
 
     public function index(Request $request)
     {
-        $query = Inventario::with(['almacen', 'articulo']);
+        $query = Inventario::with(['almacen', 'articulo.medida']);
 
         $searchableFields = [
             'id',
@@ -60,7 +60,7 @@ class InventarioController extends Controller
 
     public function show(Inventario $inventario)
     {
-        $inventario->load(['almacen', 'articulo']);
+        $inventario->load(['almacen', 'articulo.medida']);
         return response()->json($inventario);
     }
 
@@ -73,7 +73,12 @@ class InventarioController extends Controller
             'ubicacion' => 'nullable|string|max:100',
         ]);
 
-        $inventario->update($request->all());
+        // IMPORTANTE: Solo actualizar campos que se enviaron explícitamente
+        // Esto preserva los datos existentes del servidor que no se están actualizando
+        $camposPermitidos = ['almacen_id', 'articulo_id', 'cantidad', 'ubicacion'];
+        $data = $request->only($camposPermitidos);
+
+        $inventario->update($data);
 
         return response()->json($inventario);
     }
@@ -90,7 +95,7 @@ class InventarioController extends Controller
      */
     public function porItem(Request $request)
     {
-        $inventarios = Inventario::with(['articulo', 'almacen'])
+        $inventarios = Inventario::with(['articulo.medida', 'almacen'])
             ->select('articulo_id')
             ->selectRaw('SUM(cantidad) as total_stock')
             ->selectRaw('SUM(saldo_stock) as total_saldo')
@@ -115,9 +120,15 @@ class InventarioController extends Controller
 
             return [
                 'articulo' => $articulo,
-                'total_stock' => $inv->total_stock,
-                'total_saldo' => $inv->total_saldo,
-                'almacenes' => $almacenesConStock
+                'total_stock' => (float) ($inv->total_stock ?? 0),
+                'total_saldo' => (float) ($inv->total_saldo ?? 0),
+                'almacenes' => $almacenesConStock->map(function ($item) {
+                    return [
+                        'almacen' => $item['almacen'],
+                        'cantidad' => (float) ($item['cantidad'] ?? 0),
+                        'saldo' => (float) ($item['saldo_stock'] ?? 0)
+                    ];
+                })
             ];
         });
 
@@ -133,7 +144,7 @@ class InventarioController extends Controller
      */
     public function porLotes(Request $request)
     {
-        $query = Inventario::with(['almacen', 'articulo'])
+        $query = Inventario::with(['almacen', 'articulo.medida'])
             ->orderBy('created_at', 'desc');
 
         // Filtro opcional por artículo
@@ -186,7 +197,42 @@ class InventarioController extends Controller
 
         $import = new InventarioImport();
         try {
-            Excel::import($import, $request->file('file'));
+            // Forzar lectura de todas las filas, incluso las que parecen vacías
+            $file = $request->file('file');
+            \Log::info("InventarioController - Iniciando importación", [
+                'nombre_archivo' => $file->getClientOriginalName(),
+                'tamaño' => $file->getSize(),
+                'mime_type' => $file->getMimeType()
+            ]);
+            
+            // Intentar leer el archivo para contar filas antes de importar
+            try {
+                $reader = \Maatwebsite\Excel\Facades\Excel::toArray([], $file);
+                $totalFilasEnArchivo = 0;
+                if (!empty($reader) && is_array($reader[0])) {
+                    $totalFilasEnArchivo = count($reader[0]);
+                }
+                \Log::info("InventarioController - Total de filas detectadas en archivo (incluyendo encabezado)", [
+                    'total_filas_con_encabezado' => $totalFilasEnArchivo,
+                    'total_filas_datos_esperadas' => $totalFilasEnArchivo > 0 ? $totalFilasEnArchivo - 1 : 0
+                ]);
+            } catch (\Exception $e) {
+                \Log::warning("InventarioController - No se pudo contar filas antes de importar", [
+                    'error' => $e->getMessage()
+                ]);
+            }
+            
+            // Forzar lectura de todas las filas, incluso las que parecen vacías
+            Excel::import($import, $file, null, \Maatwebsite\Excel\Excel::XLSX, [
+                'readOnly' => false,
+                'ignoreEmpty' => false,
+                'calculate' => false,
+            ]);
+            \Log::info("InventarioController - Importación completada", [
+                'total_rows' => $import->getTotalRows(),
+                'imported_count' => $import->getImportedCount(),
+                'skipped_count' => $import->getSkippedCount()
+            ]);
         } catch (\Maatwebsite\Excel\Validators\ValidationException $e) {
             $failures = $e->failures();
             $errors = [];
@@ -218,9 +264,11 @@ class InventarioController extends Controller
 
         return response()->json([
             'message' => count($errors) > 0 ? 'Importación completada con algunos errores' : 'Importación completada exitosamente',
+            'total_filas_procesadas' => $import->getTotalRows(),
             'importadas_exitosamente' => $import->getImportedCount(),
-            'filas_con_errores' => $import->getSkippedCount(),
-            'errores' => $errors
+            'filas_omitidas' => $import->getSkippedCount(),
+            'errores' => $import->getErrorCount(),
+            'detalles_errores' => $errors
         ]);
     }
 
@@ -245,7 +293,7 @@ class InventarioController extends Controller
     public function exportPDF()
     {
         try {
-            $inventarios = Inventario::with(['articulo', 'almacen'])->get();
+            $inventarios = Inventario::with(['articulo.medida', 'almacen'])->get();
             $pdf = Pdf::loadView('pdf.inventarios', compact('inventarios'));
             $pdf->setPaper('a4', 'landscape');
             return $pdf->download('inventario.pdf');

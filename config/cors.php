@@ -1,41 +1,41 @@
 <?php
 
 return [
-    /*
-    |--------------------------------------------------------------------------
-    | Cross-Origin Resource Sharing (CORS) Configuration
-    |--------------------------------------------------------------------------
-    |
-    | Here you may configure your settings for cross-origin resource sharing
-    | or "CORS". This determines what cross-origin operations may be executed
-    | in web browsers. You are free to adjust these settings as needed.
-    |
-    | To learn more: https://developer.mozilla.org/en-US/docs/Web/HTTP/CORS
-    |
-    */
+        /*
+        |--------------------------------------------------------------------------
+        | Cross-Origin Resource Sharing (CORS) Configuration
+        |--------------------------------------------------------------------------
+        |
+        | Here you may configure your settings for cross-origin resource sharing
+        | or "CORS". This determines what cross-origin operations may be executed
+        | in web browsers. You are free to adjust these settings as needed.
+        |
+        | To learn more: https://developer.mozilla.org/en-US/docs/Web/HTTP/CORS
+        |
+        */
 
-    'paths' => ['api/*', 'sanctum/csrf-cookie'],
+        'paths' => ['api/*', 'sanctum/csrf-cookie'],
 
-    'allowed_methods' => ['*'],
+        'allowed_methods' => ['*'],
 
-    'allowed_origins' => [
-        env('FRONTEND_URL', 'http://localhost:4200'),
-        env('APP_URL', 'http://localhost'),
-        'http://localhost:4200',
-        'http://127.0.0.1:4200',
-        'https://mc-autoparts.soft-lg.com',
-        'https://autoparts.soft-lg.com',
-        'https://api.autoparts.soft-lg.com',
-    ],
+        'allowed_origins' => [
+                env('FRONTEND_URL', 'http://localhost:4200'),
+                env('APP_URL', 'http://localhost'),
+                'http://localhost:4200',
+                'http://127.0.0.1:4200',
+                'https://mc-autoparts.soft-lg.com',
+                'https://autoparts.soft-lg.com',
+                'https://api.autoparts.soft-lg.com',
+        ],
 
-    'allowed_origins_patterns' => [],
+        'allowed_origins_patterns' => [],
 
-    'allowed_headers' => ['*'],
+        'allowed_headers' => ['*'],
 
-    'exposed_headers' => [],
+        'exposed_headers' => [],
 
-    'max_age' => 86400,
+        'max_age' => 86400,
 
-    'supports_credentials' => true,
+        'supports_credentials' => true,
 ];
 

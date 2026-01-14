@@ -36,7 +36,8 @@ class TipoPagoController extends Controller
             'nombre_tipo_pago' => 'required|string|max:100|unique:tipo_pagos,nombre_tipo_pago,' . $tipoPago->id,
         ]);
 
-        $tipoPago->update($request->all());
+        $camposPermitidos = ['nombre_tipo_pago'];
+        $tipoPago->update($request->only($camposPermitidos));
 
         return response()->json($tipoPago);
     }

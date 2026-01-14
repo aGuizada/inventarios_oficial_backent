@@ -47,8 +47,13 @@ class KardexService
         if (!Schema::hasTable('kardex')) {
             \Log::warning('Tabla kardex no existe. Actualizando solo inventario y stock.');
             try {
-                $cantidadEntrada = $datos['cantidad_entrada'] ?? 0;
-                $cantidadSalida = $datos['cantidad_salida'] ?? 0;
+                $cantidadEntrada = (float) ($datos['cantidad_entrada'] ?? 0);
+                $cantidadSalida = (float) ($datos['cantidad_salida'] ?? 0);
+                
+                // Log para depuración
+                \Log::info("KardexService - Sin tabla kardex, actualizando directamente");
+                \Log::info("Articulo ID: {$datos['articulo_id']}, Almacen ID: {$datos['almacen_id']}");
+                \Log::info("Entrada: {$cantidadEntrada}, Salida: {$cantidadSalida}");
                 
                 // Actualizar inventario y stock sin registrar en kardex
                 $this->actualizarInventario($datos['articulo_id'], $datos['almacen_id'], $cantidadEntrada, $cantidadSalida);
@@ -61,39 +66,76 @@ class KardexService
             }
         }
         
+        // Verificar si ya estamos dentro de una transacción
+        $enTransaccion = \DB::transactionLevel() > 0;
+        
+        if (!$enTransaccion) {
         DB::beginTransaction();
+        }
+        
         try {
             // Validar datos requeridos
             $this->validarDatos($datos);
 
             // Obtener el saldo actual del inventario (fuente de verdad)
             // El inventario.saldo_stock es la fuente de verdad, no el kardex
-            $inventario = Inventario::where('articulo_id', $datos['articulo_id'])
-                ->where('almacen_id', $datos['almacen_id'])
-                ->first();
+            // Usar CAST explícito para asegurar precisión decimal
+            $inventario = \DB::selectOne(
+                "SELECT CAST(SUM(saldo_stock) AS DECIMAL(11,3)) as saldo_stock 
+                 FROM inventarios 
+                 WHERE articulo_id = ? AND almacen_id = ?",
+                [$datos['articulo_id'], $datos['almacen_id']]
+            );
             
             // Usar el saldo_stock del inventario como saldo anterior (más confiable que kardex)
-            if ($inventario) {
-                $saldoAnterior = $inventario->saldo_stock ?? 0;
+            if ($inventario && $inventario->saldo_stock !== null) {
+                $saldoAnterior = (float) $inventario->saldo_stock;
             } else {
                 // Si no hay inventario, intentar calcular desde kardex como fallback
-                $saldoAnterior = $this->calcularSaldo($datos['articulo_id'], $datos['almacen_id']);
+                $saldoAnterior = (float) $this->calcularSaldo($datos['articulo_id'], $datos['almacen_id']);
             }
 
-            $cantidadEntrada = $datos['cantidad_entrada'] ?? 0;
-            $cantidadSalida = $datos['cantidad_salida'] ?? 0;
-            $nuevoSaldo = $saldoAnterior + $cantidadEntrada - $cantidadSalida;
+            $cantidadEntrada = (float) ($datos['cantidad_entrada'] ?? 0);
+            $cantidadSalida = (float) ($datos['cantidad_salida'] ?? 0);
+            $nuevoSaldo = (float) ($saldoAnterior + $cantidadEntrada - $cantidadSalida);
+            
+            // Log para depuración
+            \Log::info("KardexService - Registrar Movimiento");
+            \Log::info("Articulo ID: {$datos['articulo_id']}, Almacen ID: {$datos['almacen_id']}");
+            \Log::info("Saldo Anterior: {$saldoAnterior}, Entrada: {$cantidadEntrada}, Salida: {$cantidadSalida}, Nuevo Saldo: {$nuevoSaldo}");
+            \Log::info("En transacción: " . ($enTransaccion ? 'SI (nivel: ' . \DB::transactionLevel() . ')' : 'NO'));
 
             // Validar saldo no negativo
             if ($nuevoSaldo < 0) {
                 throw new Exception("El movimiento dejaría un saldo negativo. Stock disponible: {$saldoAnterior}");
             }
 
-            // Actualizar o crear inventario
+            // CRÍTICO: Actualizar inventario y stock ANTES de crear el registro kardex
+            // Esto asegura que los cambios se persistan correctamente
             $this->actualizarInventario($datos['articulo_id'], $datos['almacen_id'], $cantidadEntrada, $cantidadSalida);
 
             // Actualizar stock del artículo
             $this->actualizarStockArticulo($datos['articulo_id'], $cantidadEntrada, $cantidadSalida);
+            
+            // Verificar que los cambios se aplicaron ANTES de continuar usando CAST explícito
+            $inventarioVerificado = \DB::selectOne(
+                "SELECT CAST(SUM(saldo_stock) AS DECIMAL(11,3)) as saldo_stock 
+                 FROM inventarios 
+                 WHERE articulo_id = ? AND almacen_id = ?",
+                [$datos['articulo_id'], $datos['almacen_id']]
+            );
+            
+            if ($inventarioVerificado && $inventarioVerificado->saldo_stock !== null) {
+                $stockVerificado = (float) $inventarioVerificado->saldo_stock;
+                \Log::info("Verificación después de actualizar - Stock esperado: {$nuevoSaldo}, Stock actual: {$stockVerificado}");
+                
+                if (abs($stockVerificado - $nuevoSaldo) > 0.0001) {
+                    \Log::error("ERROR CRÍTICO: El stock no coincide después de actualizar. Reintentando...");
+                    // Reintentar la actualización
+                    $this->actualizarInventario($datos['articulo_id'], $datos['almacen_id'], $cantidadEntrada, $cantidadSalida);
+                    $this->actualizarStockArticulo($datos['articulo_id'], $cantidadEntrada, $cantidadSalida);
+                }
+            }
 
             // Calcular costos y precios
             $costoTotal = ($cantidadEntrada + $cantidadSalida) * ($datos['costo_unitario'] ?? 0);
@@ -121,11 +163,16 @@ class KardexService
                 'traspaso_id' => $datos['traspaso_id'] ?? null,
             ]);
 
+            if (!$enTransaccion) {
             DB::commit();
+            }
+            
             return $kardex->load(['articulo', 'almacen', 'usuario']);
 
         } catch (Exception $e) {
+            if (!$enTransaccion) {
             DB::rollBack();
+            }
             throw $e;
         }
     }
@@ -283,46 +330,303 @@ class KardexService
 
     private function actualizarInventario(int $articuloId, int $almacenId, float $entrada, float $salida): void
     {
-        $inventario = Inventario::where('articulo_id', $articuloId)
-            ->where('almacen_id', $almacenId)
-            ->first();
-
-        $diferencia = $entrada - $salida;
-
-        if ($inventario) {
-            $inventario->cantidad += $diferencia;
-            $inventario->saldo_stock += $diferencia;
-            $inventario->save();
-        } else {
-            Inventario::create([
+        // CRÍTICO: Redondear entrada y salida a 3 decimales antes de calcular diferencia
+        $entrada = round((float) $entrada, 3);
+        $salida = round((float) $salida, 3);
+        $diferencia = (float) ($entrada - $salida);
+        
+        \Log::info("Actualizar Inventario - Artículo: {$articuloId}, Almacén: {$almacenId}, Entrada: {$entrada}, Salida: {$salida}, Diferencia: {$diferencia}");
+        
+        // CRÍTICO: Obtener TODOS los registros de inventario para este artículo y almacén
+        // NO usar el modelo Eloquent para evitar problemas de caché
+        // Usar CAST explícito para asegurar que los valores se obtengan como DECIMAL con precisión
+        $registrosBD = \DB::select(
+            "SELECT id, 
+                    CAST(cantidad AS DECIMAL(11,3)) as cantidad, 
+                    CAST(saldo_stock AS DECIMAL(11,3)) as saldo_stock, 
+                    fecha_vencimiento 
+             FROM inventarios 
+             WHERE articulo_id = ? AND almacen_id = ? 
+             ORDER BY fecha_vencimiento ASC, id ASC",
+            [$articuloId, $almacenId]
+        );
+        
+        // Convertir a Collection para mantener compatibilidad con el código existente
+        $registrosBD = collect($registrosBD);
+        
+        if ($registrosBD->isEmpty()) {
+            \Log::error("ERROR: No se encontró el inventario para Articulo ID: {$articuloId}, Almacen ID: {$almacenId}");
+            // Si es una entrada, crear el inventario si no existe
+            if ($diferencia > 0) {
+                $idNuevo = \DB::table('inventarios')->insertGetId([
                 'articulo_id' => $articuloId,
                 'almacen_id' => $almacenId,
                 'cantidad' => $diferencia,
                 'saldo_stock' => $diferencia,
-                'fecha_vencimiento' => '2099-12-31'
-            ]);
+                    'fecha_vencimiento' => '2099-12-31',
+                    'created_at' => now(),
+                    'updated_at' => now()
+                ]);
+                \Log::info("Inventario creado con ID: {$idNuevo}, stock: {$diferencia}");
+            }
+            return;
         }
+        
+        // Si es una entrada (diferencia > 0), actualizar el primer registro o crear uno nuevo
+        if ($diferencia > 0) {
+            $primerRegistro = $registrosBD->first();
+            $stockAnterior = (float) $primerRegistro->saldo_stock;
+            $cantidadAnterior = (float) $primerRegistro->cantidad;
+            $nuevaCantidad = (float) $cantidadAnterior + $diferencia;
+            $nuevoStock = (float) $stockAnterior + $diferencia;
+            
+            \Log::info("ID inventario: {$primerRegistro->id}");
+            \Log::info("Valores ANTES: cantidad={$cantidadAnterior}, saldo_stock={$stockAnterior}");
+            \Log::info("Valores DESPUÉS esperados: cantidad={$nuevaCantidad}, saldo_stock={$nuevoStock}");
+            
+            // Usar UPDATE con operación aritmética directa en SQL para evitar problemas de redondeo
+            // Formatear el valor con precisión decimal
+            $diferenciaFormateada = number_format((float)$diferencia, 3, '.', '');
+            
+            $filasAfectadas = \DB::update(
+                "UPDATE inventarios SET 
+                    cantidad = cantidad + CAST(? AS DECIMAL(11,3)),
+                    saldo_stock = saldo_stock + CAST(? AS DECIMAL(11,3)),
+                    updated_at = NOW() 
+                WHERE id = ?",
+                [$diferenciaFormateada, $diferenciaFormateada, $primerRegistro->id]
+            );
+            
+            \Log::info("UPDATE ejecutado (entrada) - Filas afectadas: {$filasAfectadas}, Diferencia: {$diferenciaFormateada}");
+            
+            // Verificar DESPUÉS del UPDATE usando CAST explícito para mantener precisión decimal
+            $registroDespues = \DB::selectOne(
+                "SELECT CAST(cantidad AS DECIMAL(11,3)) as cantidad, CAST(saldo_stock AS DECIMAL(11,3)) as saldo_stock 
+                 FROM inventarios 
+                 WHERE id = ?",
+                [$primerRegistro->id]
+            );
+            
+            \Log::info("Valores DESPUÉS en BD: cantidad={$registroDespues->cantidad}, saldo_stock={$registroDespues->saldo_stock}");
+            \Log::info("✓ Stock actualizado correctamente (entrada)");
+            return;
+        }
+        
+        // Si es una salida (diferencia < 0), descontar usando FIFO
+        // CRÍTICO: Redondear la cantidad a descontar a 3 decimales para mantener precisión
+        $cantidadADescontar = round(abs($diferencia), 3);
+        $cantidadRestante = (float) $cantidadADescontar;
+        
+        \Log::info("Descontando {$cantidadADescontar} unidades usando FIFO de {$registrosBD->count()} registros");
+        
+        foreach ($registrosBD as $registro) {
+            // Usar comparación con tolerancia para decimales
+            if ($cantidadRestante <= 0.0001) {
+                break;
+            }
+            
+            // Obtener el ID del registro - puede venir como objeto o array
+            $registroId = is_object($registro) ? ($registro->id ?? null) : ($registro['id'] ?? null);
+            
+            if (!$registroId) {
+                \Log::warning("Registro sin ID, saltando");
+                continue;
+            }
+            
+            // Obtener el stock actualizado directamente de la BD para este registro específico
+            // Esto asegura que tenemos el valor más reciente después de posibles actualizaciones anteriores
+            // Usar CAST explícito para asegurar que los valores se obtengan como DECIMAL
+            $registroActualizado = \DB::selectOne(
+                "SELECT id, CAST(cantidad AS DECIMAL(11,3)) as cantidad, CAST(saldo_stock AS DECIMAL(11,3)) as saldo_stock 
+                 FROM inventarios 
+                 WHERE id = ?",
+                [$registroId]
+            );
+            
+            if (!$registroActualizado) {
+                \Log::warning("Registro no encontrado después de SELECT, ID: {$registroId}");
+                continue; // Saltar si el registro ya no existe
+            }
+            
+            // Asegurar que el valor se convierta correctamente a float manteniendo los decimales
+            $stockDisponible = (float) ($registroActualizado->saldo_stock ?? 0);
+            $idRegistro = (int) ($registroActualizado->id ?? $registroId);
+            
+            // Usar comparación con tolerancia para decimales
+            if ($stockDisponible <= 0.0001) {
+                continue; // Saltar registros sin stock
+            }
+            
+            // Calcular cuánto descontar de este registro
+            // CRÍTICO: Redondear a 3 decimales para mantener precisión
+            $cantidadADescontarDeEste = round((float) min($cantidadRestante, $stockDisponible), 3);
+            $cantidadRestante = round((float) ($cantidadRestante - $cantidadADescontarDeEste), 3);
+            
+            $stockAnterior = $stockDisponible;
+            
+            // CRÍTICO: Leer el valor actual de la BD ANTES de hacer el UPDATE
+            // Esto asegura que tenemos el valor más reciente y calculamos correctamente en PHP
+            $registroActual = \DB::selectOne(
+                "SELECT CAST(cantidad AS DECIMAL(11,3)) as cantidad, CAST(saldo_stock AS DECIMAL(11,3)) as saldo_stock 
+                 FROM inventarios 
+                 WHERE id = ?",
+                [$idRegistro]
+            );
+            
+            if (!$registroActual) {
+                \Log::error("No se pudo leer el registro antes del UPDATE, ID: {$idRegistro}");
+                continue;
+            }
+            
+            $cantidadActual = (float)$registroActual->cantidad;
+            $saldoStockActual = (float)$registroActual->saldo_stock;
+            
+            // Calcular los nuevos valores en PHP para asegurar precisión decimal
+            $nuevaCantidad = round($cantidadActual - $cantidadADescontarDeEste, 3);
+            $nuevoSaldoStock = round($saldoStockActual - $cantidadADescontarDeEste, 3);
+            
+            // CRÍTICO: Asegurar que los valores no sean negativos y estén redondeados
+            $nuevaCantidad = max(0, round($nuevaCantidad, 3));
+            $nuevoSaldoStock = max(0, round($nuevoSaldoStock, 3));
+            
+            \Log::info("UPDATE Stock - ID: {$idRegistro}, Antes: cantidad={$cantidadActual}, saldo={$saldoStockActual}, Descontar: {$cantidadADescontarDeEste}, Después: cantidad={$nuevaCantidad}, saldo={$nuevoSaldoStock}");
+            
+            // CRÍTICO: Usar update() directamente en el modelo para forzar la actualización
+            try {
+                // Usar update() directamente que ejecuta el UPDATE inmediatamente
+                $filasAfectadas = \App\Models\Inventario::where('id', $idRegistro)
+                    ->update([
+                        'cantidad' => $nuevaCantidad,
+                        'saldo_stock' => $nuevoSaldoStock,
+                    ]);
+                
+                if ($filasAfectadas === 0) {
+                    \Log::warning("UPDATE con Eloquent falló, intentando con Query Builder para ID: {$idRegistro}");
+                    // Intentar con Query Builder como respaldo
+                    $filasAfectadas = \DB::update(
+                        "UPDATE inventarios SET cantidad = ?, saldo_stock = ?, updated_at = NOW() WHERE id = ?",
+                        [$nuevaCantidad, $nuevoSaldoStock, $idRegistro]
+                    );
+                    
+                    if ($filasAfectadas === 0) {
+                        // Verificar si el registro existe
+                        $verificacionExistencia = \DB::selectOne(
+                            "SELECT id FROM inventarios WHERE id = ?",
+                            [$idRegistro]
+                        );
+                        if (!$verificacionExistencia) {
+                            throw new \Exception("Error crítico: El registro con ID {$idRegistro} no existe.");
+                        }
+                        \Log::error("ERROR: El UPDATE no afectó filas aunque el registro existe. ID: {$idRegistro}");
+                    }
+                }
+            } catch (\Exception $e) {
+                \Log::error("ERROR al actualizar: " . $e->getMessage());
+                throw $e;
+            }
+            
+            // Actualizar el valor esperado para la verificación
+            $nuevoStock = $nuevoSaldoStock;
+            
+            // Verificar DESPUÉS del UPDATE usando CAST explícito para mantener precisión decimal
+            $registroDespues = \DB::selectOne(
+                "SELECT CAST(cantidad AS DECIMAL(11,3)) as cantidad, CAST(saldo_stock AS DECIMAL(11,3)) as saldo_stock 
+                 FROM inventarios 
+                 WHERE id = ?",
+                [$idRegistro]
+            );
+            
+            if ($registroDespues) {
+                $stockDespuesVerificado = (float)$registroDespues->saldo_stock;
+                $diferencia = abs($stockDespuesVerificado - $nuevoStock);
+                
+                // Usar tolerancia más amplia para evitar falsos positivos por redondeo de MySQL
+                if ($diferencia > 0.01) {
+                    \Log::warning("Stock verificado - Diferencia alta: {$diferencia}. Esperado: {$nuevoStock}, Obtenido: {$stockDespuesVerificado}");
+                }
+            }
+        }
+        
+        // Usar comparación con tolerancia para decimales
+        if ($cantidadRestante > 0.0001) {
+            \Log::error("ERROR: No se pudo descontar todo el stock. Faltan {$cantidadRestante} unidades");
+            throw new \Exception("Stock insuficiente. Faltan {$cantidadRestante} unidades para completar la operación.");
+        }
+        
+        \Log::info("✓ Stock descontado correctamente (salida). Cantidad total descontada: {$cantidadADescontar}");
     }
 
     private function actualizarStockArticulo(int $articuloId, float $entrada, float $salida): void
     {
-        $articulo = Articulo::find($articuloId);
-        if ($articulo) {
-            $articulo->stock += ($entrada - $salida);
-            $articulo->save();
+        $diferenciaStock = (float) ($entrada - $salida);
+        
+        // CRÍTICO: Obtener el stock directamente desde BD usando CAST explícito para precisión decimal
+        $stockResult = \DB::selectOne(
+            "SELECT CAST(stock AS DECIMAL(11,3)) as stock 
+             FROM articulos 
+             WHERE id = ?",
+            [$articuloId]
+        );
+        
+        if (!$stockResult || $stockResult->stock === null) {
+            \Log::error("No se encontró el artículo con ID: {$articuloId}");
+            return;
+        }
+        
+        $stockAnterior = (float) $stockResult->stock;
+        // Redondear diferenciaStock a 3 decimales antes de calcular
+        $diferenciaStock = round($diferenciaStock, 3);
+        $nuevoStock = round((float) $stockAnterior + $diferenciaStock, 3);
+        
+        // CRÍTICO: Formatear el valor con 3 decimales para asegurar precisión
+        $diferenciaStockFormateada = number_format((float)$diferenciaStock, 3, '.', '');
+        
+        // CRÍTICO: Usar \DB::statement() con CAST explícito para asegurar precisión decimal
+        $resultado = \DB::statement(
+            "UPDATE articulos SET 
+                stock = CAST(stock AS DECIMAL(11,3)) + CAST(? AS DECIMAL(11,3)),
+                updated_at = NOW() 
+            WHERE id = ?",
+            [$diferenciaStockFormateada, $articuloId]
+        );
+        
+        // Verificar DESPUÉS del UPDATE usando CAST explícito
+        $stockDespuesResult = \DB::selectOne(
+            "SELECT CAST(stock AS DECIMAL(11,3)) as stock 
+             FROM articulos 
+             WHERE id = ?",
+            [$articuloId]
+        );
+        
+        $stockDespues = $stockDespuesResult ? (float) $stockDespuesResult->stock : 0;
+        
+        if (abs($stockDespues - $nuevoStock) > 0.0001) {
+            \Log::error("Stock artículo - No coincide. Esperado: {$nuevoStock}, Obtenido: {$stockDespues}");
         }
     }
 
     private function generarNumeroDocumento(string $tipoMovimiento): string
     {
-        $prefijo = match ($tipoMovimiento) {
-            'ajuste' => 'AJ',
-            'compra' => 'CO',
-            'venta' => 'VE',
-            'traspaso_entrada' => 'TE',
-            'traspaso_salida' => 'TS',
-            default => 'MV'
-        };
+        switch ($tipoMovimiento) {
+            case 'ajuste':
+                $prefijo = 'AJ';
+                break;
+            case 'compra':
+                $prefijo = 'CO';
+                break;
+            case 'venta':
+                $prefijo = 'VE';
+                break;
+            case 'traspaso_entrada':
+                $prefijo = 'TE';
+                break;
+            case 'traspaso_salida':
+                $prefijo = 'TS';
+                break;
+            default:
+                $prefijo = 'MV';
+                break;
+        }
 
         return $prefijo . '-' . time() . '-' . rand(100, 999);
     }

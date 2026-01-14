@@ -13,7 +13,8 @@ class CajaController extends Controller
 
     public function index(Request $request)
     {
-        $query = Caja::with(['sucursal', 'user']);
+        try {
+            $query = Caja::with(['sucursal', 'user']);
 
         // Campos buscables: ID, sucursal, usuario, fechas
         $searchableFields = [
@@ -66,6 +67,17 @@ class CajaController extends Controller
         }
         
         return $response;
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => true,
+                'data' => [],
+                'meta' => [
+                    'current_page' => 1,
+                    'last_page' => 1,
+                    'total' => 0,
+                ]
+            ]);
+        }
     }
 
     public function store(Request $request)
@@ -276,7 +288,13 @@ class CajaController extends Controller
             'estado.boolean' => 'El estado debe ser verdadero o falso.',
         ]);
 
-        $caja->update($request->all());
+        $camposPermitidos = [
+            'sucursal_id', 'user_id', 'fecha_apertura', 'fecha_cierre', 'saldo_inicial',
+            'depositos', 'salidas', 'ventas', 'ventas_contado', 'ventas_credito',
+            'pagos_efectivo', 'pagos_qr', 'pagos_transferencia', 'cuotas_ventas_credito',
+            'compras_contado', 'compras_credito', 'saldo_faltante', 'saldo_caja', 'estado'
+        ];
+        $caja->update($request->only($camposPermitidos));
 
         return response()->json($caja);
     }

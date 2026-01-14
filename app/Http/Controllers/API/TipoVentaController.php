@@ -36,7 +36,8 @@ class TipoVentaController extends Controller
             'nombre_tipo_ventas' => 'required|string|max:100|unique:tipo_ventas,nombre_tipo_ventas,' . $tipoVenta->id,
         ]);
 
-        $tipoVenta->update($request->all());
+        $camposPermitidos = ['nombre_tipo_ventas'];
+        $tipoVenta->update($request->only($camposPermitidos));
 
         return response()->json($tipoVenta);
     }

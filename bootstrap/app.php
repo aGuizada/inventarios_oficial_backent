@@ -18,6 +18,11 @@ return Application::configure(basePath: dirname(__DIR__))
             \Illuminate\Http\Middleware\HandleCors::class,
         ]);
         
+        // Permitir CORS para todas las rutas API
+        $middleware->validateCsrfTokens(except: [
+            'api/*',
+        ]);
+        
         // No configurar redirectGuestsTo para evitar que intente usar route('login')
         // El manejador de excepciones se encargará de devolver JSON para APIs
     })

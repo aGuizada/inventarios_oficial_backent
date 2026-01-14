@@ -7,13 +7,15 @@ use App\Http\Traits\HasPagination;
 use App\Models\Articulo;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Storage;
+use Illuminate\Support\Facades\URL;
+use Illuminate\Support\Str;
 use Maatwebsite\Excel\Excel as ExcelService;
 use App\Exports\ArticulosExport;
 use App\Imports\ArticulosImport;
 use Barryvdh\DomPDF\Facade\Pdf;
 use Maatwebsite\Excel\Facades\Excel;
-use Intervention\Image\ImageManager;
-use Intervention\Image\Drivers\Gd\Driver;
+// use Intervention\Image\ImageManager;
+// use Intervention\Image\Drivers\Gd\Driver;
 use Illuminate\Validation\ValidationException;
 use Illuminate\Validation\Rule;
 
@@ -21,28 +23,100 @@ class ArticuloController extends Controller
 {
     use HasPagination;
 
+    /**
+     * Agrega la URL completa de la imagen al artículo
+     * La fotografia se guarda solo como nombre de archivo, no como ruta completa
+     */
+    private function addImageUrl($articulo)
+    {
+        if ($articulo->fotografia) {
+            $baseUrl = rtrim(config('app.url'), '/');
+            
+            // Si ya tiene ruta completa (compatibilidad con datos antiguos)
+            if (strpos($articulo->fotografia, '/') !== false) {
+                // Extraer solo el nombre del archivo
+                $filename = basename($articulo->fotografia);
+                // Usar endpoint de API para servir la imagen directamente desde storage
+                $articulo->fotografia_url = $baseUrl . '/api/images/articulos/' . $filename;
+            } else {
+                // Solo nombre de archivo (nueva lógica)
+                // Usar endpoint de API para servir la imagen directamente desde storage
+                // Esto funciona incluso si el enlace simbólico no está creado
+                $articulo->fotografia_url = $baseUrl . '/api/images/articulos/' . $articulo->fotografia;
+            }
+        } else {
+            $articulo->fotografia_url = null;
+        }
+        return $articulo;
+    }
+
+    /**
+     * Agrega URLs de imágenes a una colección de artículos
+     */
+    private function addImageUrlsToCollection($articulos)
+    {
+        if (is_array($articulos)) {
+            return array_map([$this, 'addImageUrl'], $articulos);
+        }
+        return $articulos->map(function ($articulo) {
+            return $this->addImageUrl($articulo);
+        });
+    }
+
     public function index(Request $request)
     {
-        // Cargar TODOS los artículos sin filtrar por estado (mostrar todos sin excepción)
-        $query = Articulo::with(['categoria', 'proveedor', 'medida', 'marca', 'industria']);
+        try {
+            // Optimizar carga de relaciones: solo cargar campos necesarios
+            $query = Articulo::with([
+                'categoria:id,nombre',
+                'proveedor:id,nombre',
+                'medida:id,nombre_medida',
+                'marca:id,nombre',
+                'industria:id,nombre'
+            ]);
 
-        // Campos buscables: solo código y nombre del artículo
-        $searchableFields = [
-            'codigo',
-            'nombre'
-        ];
+            // Campos buscables: solo código y nombre del artículo
+            $searchableFields = [
+                'codigo',
+                'nombre'
+            ];
 
-        // Aplicar búsqueda
-        $query = $this->applySearch($query, $request, $searchableFields);
+            // Aplicar búsqueda
+            $query = $this->applySearch($query, $request, $searchableFields);
 
-        // Campos ordenables
-        $sortableFields = ['id', 'codigo', 'nombre', 'precio_venta', 'stock', 'created_at'];
+            // Campos ordenables
+            $sortableFields = ['id', 'codigo', 'nombre', 'precio_venta', 'stock', 'created_at'];
 
-        // Aplicar ordenamiento
-        $query = $this->applySorting($query, $request, $sortableFields, 'id', 'desc');
+            // Aplicar ordenamiento
+            $query = $this->applySorting($query, $request, $sortableFields, 'id', 'desc');
 
-        // Aplicar paginación (sin límite máximo para catálogo)
-        return $this->paginateResponse($query, $request, 15, 999999);
+            // Aplicar paginación (sin límite máximo para catálogo)
+            $response = $this->paginateResponse($query, $request, 15, 999999);
+            
+            // Agregar URLs de imágenes usando el método existente addImageUrl
+            if ($response->getStatusCode() === 200) {
+                $responseData = json_decode($response->getContent(), true);
+                if (isset($responseData['success']) && $responseData['success'] && isset($responseData['data']['data'])) {
+                    // Procesar cada artículo usando addImageUrl (mismo método que usan show, store, update)
+                    foreach ($responseData['data']['data'] as &$articulo) {
+                        // Convertir array a objeto temporal para usar addImageUrl
+                        $articuloObj = (object)$articulo;
+                        $this->addImageUrl($articuloObj);
+                        // Convertir de vuelta a array y preservar fotografia_url
+                        $articulo = (array)$articuloObj;
+                    }
+                    return response()->json($responseData);
+                }
+            }
+            
+            return $response;
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Error al cargar artículos: ' . $e->getMessage(),
+                'data' => []
+            ], 500);
+        }
     }
 
     public function store(Request $request)
@@ -62,8 +136,7 @@ class ArticuloController extends Controller
                 'codigo' => [
                     'nullable',
                     'string',
-                    'max:255',
-                    Rule::unique('articulos', 'codigo')->whereNotNull('codigo')
+                    'max:255'
                 ],
                 'nombre' => 'required|string|max:255',
                 'unidad_envase' => 'required|integer',
@@ -74,40 +147,82 @@ class ArticuloController extends Controller
                 'precio_dos' => 'nullable|numeric',
                 'precio_tres' => 'nullable|numeric',
                 'precio_cuatro' => 'nullable|numeric',
-                'stock' => 'required|integer',
+                'stock' => 'required|numeric|min:0',
                 'descripcion' => 'nullable|string|max:256',
                 'costo_compra' => 'required|numeric',
                 'vencimiento' => 'nullable|integer',
-                'fotografia' => 'nullable|image|mimes:jpeg,png,jpg,gif|max:2048',
+                'fotografia' => 'nullable|image|mimes:jpeg,png,jpg,gif,webp|max:10240', // 10MB máximo
                 'estado' => 'boolean',
             ]);
 
             $data = $request->all();
 
+            // Manejo de la fotografía (similar al otro sistema pero mejorado)
             if ($request->hasFile('fotografia')) {
-                $file = $request->file('fotografia');
+                try {
+                    $file = $request->file('fotografia');
 
-                // Optimizar imagen con Intervention Image
-                $manager = new ImageManager(new Driver());
-                $image = $manager->read($file);
+                    // Verificar que el archivo es válido
+                    if (!$file->isValid()) {
+                        \Log::error('Archivo de imagen inválido', ['error' => $file->getError()]);
+                        throw new \Exception('El archivo de imagen no es válido');
+                    }
 
-                // Redimensionar para cards (300px es el mínimo recomendado para nitidez básica)
-                if ($image->width() > 300) {
-                    $image->scale(width: 300);
+                    // Generar nombre de archivo: slug del nombre del artículo + timestamp + extensión
+                    // Esto evita colisiones y mantiene nombres legibles
+                    $nombreArticulo = $request->input('nombre', 'articulo');
+                    $slug = Str::slug($nombreArticulo);
+                    $extension = $file->getClientOriginalExtension();
+                    $filename = $slug . '_' . time() . '.' . $extension;
+
+                    // Asegurar que el directorio existe
+                    $directory = 'articulos';
+                    if (!Storage::disk('public')->exists($directory)) {
+                        Storage::disk('public')->makeDirectory($directory);
+                    }
+
+                    // Guardar la imagen usando Storage (mejor práctica que copy/move)
+                    $saved = $file->storeAs($directory, $filename, 'public');
+                    
+                    if (!$saved) {
+                        \Log::error('Error al guardar imagen', ['filename' => $filename]);
+                        throw new \Exception('Error al guardar la imagen');
+                    }
+
+                    // Guardar solo el nombre del archivo en la BD (no la ruta completa)
+                    $data['fotografia'] = $filename;
+                    \Log::info('Imagen guardada exitosamente', [
+                        'filename' => $filename,
+                        'path' => $saved
+                    ]);
+                } catch (\Exception $e) {
+                    \Log::error('Error al procesar imagen en store', [
+                        'error' => $e->getMessage(),
+                        'trace' => $e->getTraceAsString(),
+                        'file_info' => $request->hasFile('fotografia') ? [
+                            'name' => $request->file('fotografia')->getClientOriginalName(),
+                            'size' => $request->file('fotografia')->getSize(),
+                            'mime' => $request->file('fotografia')->getMimeType()
+                        ] : 'No file'
+                    ]);
+                    // No lanzar excepción, solo registrar el error
+                    // La imagen se guardará como null si falla
+                    // Asegurar que fotografia no esté en $data si falló
+                    unset($data['fotografia']);
                 }
-
-                // Convertir a WebP con compresión alta (calidad 50)
-                $encoded = $image->toWebp(20);
-
-                $filename = pathinfo($file->getClientOriginalName(), PATHINFO_FILENAME) . '_' . time() . '.webp';
-                $path = 'articulos/' . $filename;
-
-                Storage::disk('public')->put($path, $encoded);
-                $data['fotografia'] = $path;
+            } else {
+                // Si no se envía imagen, no agregar el campo (Laravel no lo actualizará)
+                \Log::info('No se envió imagen en store', [
+                    'has_file' => $request->hasFile('fotografia'),
+                    'fotografia_in_data' => isset($data['fotografia'])
+                ]);
             }
 
             $articulo = Articulo::create($data);
             $articulo->load(['categoria', 'proveedor', 'medida', 'marca', 'industria']);
+            
+            // Agregar URL completa de la imagen
+            $this->addImageUrl($articulo);
 
             return response()->json($articulo, 201);
         } catch (ValidationException $e) {
@@ -126,44 +241,100 @@ class ArticuloController extends Controller
     public function show(Articulo $articulo)
     {
         $articulo->load(['categoria', 'proveedor', 'medida', 'marca', 'industria']);
+        
+        // Agregar URL completa de la imagen
+        $this->addImageUrl($articulo);
+        
         return response()->json($articulo);
     }
 
     public function update(Request $request, Articulo $articulo)
     {
         try {
+            // Asegurar que el artículo esté cargado con el código actual desde la BD
+            $articulo->refresh();
+            
+            // Verificar el código directamente desde la BD para asegurar que tenemos el valor correcto
+            $codigoDesdeBD = \DB::table('articulos')->where('id', $articulo->id)->value('codigo');
+            
+            // Normalizar: convertir string vacío a null
+            if ($codigoDesdeBD === '') {
+                $codigoDesdeBD = null;
+            }
+            
+            // Si hay diferencia, usar el valor de la BD
+            if ($codigoDesdeBD !== $articulo->codigo) {
+                $articulo->codigo = $codigoDesdeBD;
+            }
             // Normalizar código antes de validar: si es string vacío o la palabra "null", convertir a null real
-            if ($request->has('codigo') && ($request->codigo === '' || $request->codigo === null || $request->codigo === 'null')) {
-                $request->merge(['codigo' => null]);
+            if ($request->has('codigo')) {
+                $codigoValue = $request->codigo;
+                if ($codigoValue === '' || $codigoValue === null || $codigoValue === 'null') {
+                    $request->merge(['codigo' => null]);
+                } else {
+                    // Normalizar trim del código
+                    $codigoValue = trim((string) $codigoValue);
+                    if ($codigoValue === '') {
+                        $request->merge(['codigo' => null]);
+                    } else {
+                        $request->merge(['codigo' => $codigoValue]);
+                    }
+                }
             }
 
-            // Obtener todos los datos del request
+            // Normalizar strings vacíos a null para campos opcionales
             $allData = $request->all();
+            $nullableFields = ['precio_uno', 'precio_dos', 'precio_tres', 'precio_cuatro', 'descripcion', 'vencimiento'];
+            foreach ($nullableFields as $field) {
+                if (isset($allData[$field]) && $allData[$field] === '') {
+                    $request->merge([$field => null]);
+                    $allData[$field] = null;
+                }
+            }
+            
+            // Re-obtener los datos normalizados
+            $allData = $request->all();
+            
+            // Log para debugging
+            \Log::info('Datos recibidos en update', [
+                'all_data' => $allData,
+                'all_data_keys' => array_keys($allData),
+                'has_file' => $request->hasFile('fotografia')
+            ]);
 
             // Validación flexible: solo validar campos que vienen en la petición y no son null
             $rules = [];
 
-            if (isset($allData['categoria_id']) && $allData['categoria_id'] !== null && $allData['categoria_id'] !== '') {
+            if (array_key_exists('categoria_id', $allData) && $allData['categoria_id'] !== null && $allData['categoria_id'] !== '') {
                 $rules['categoria_id'] = 'required|integer|exists:categorias,id';
             }
-            if (isset($allData['proveedor_id']) && $allData['proveedor_id'] !== null && $allData['proveedor_id'] !== '') {
+            if (array_key_exists('proveedor_id', $allData) && $allData['proveedor_id'] !== null && $allData['proveedor_id'] !== '') {
                 $rules['proveedor_id'] = 'required|integer|exists:proveedores,id';
             }
-            if (isset($allData['medida_id']) && $allData['medida_id'] !== null && $allData['medida_id'] !== '') {
+            if (array_key_exists('medida_id', $allData) && $allData['medida_id'] !== null && $allData['medida_id'] !== '') {
                 $rules['medida_id'] = 'required|integer|exists:medidas,id';
             }
-            if (isset($allData['marca_id']) && $allData['marca_id'] !== null && $allData['marca_id'] !== '') {
+            if (array_key_exists('marca_id', $allData) && $allData['marca_id'] !== null && $allData['marca_id'] !== '') {
                 $rules['marca_id'] = 'required|integer|exists:marcas,id';
             }
-            if (isset($allData['industria_id']) && $allData['industria_id'] !== null && $allData['industria_id'] !== '') {
+            if (array_key_exists('industria_id', $allData) && $allData['industria_id'] !== null && $allData['industria_id'] !== '') {
                 $rules['industria_id'] = 'required|integer|exists:industrias,id';
             }
             if (array_key_exists('codigo', $allData)) {
+                // Normalizar el código del request (trim y convertir null/empty a null)
+                $codigoRequest = $allData['codigo'];
+                if ($codigoRequest !== null && $codigoRequest !== '') {
+                    $codigoRequest = trim((string) $codigoRequest);
+                    if ($codigoRequest === '') {
+                        $codigoRequest = null;
+                    }
+                }
+                
+                // Permitir códigos duplicados - solo validar formato, no unicidad
                 $rules['codigo'] = [
                     'nullable',
                     'string',
-                    'max:255',
-                    Rule::unique('articulos', 'codigo')->ignore($articulo->id)->whereNotNull('codigo')
+                    'max:255'
                 ];
             }
             if (isset($allData['nombre']) && $allData['nombre'] !== null) {
@@ -194,7 +365,7 @@ class ArticuloController extends Controller
                 $rules['precio_cuatro'] = 'nullable|numeric';
             }
             if (isset($allData['stock'])) {
-                $rules['stock'] = 'nullable|integer';
+                $rules['stock'] = 'nullable|numeric|min:0';
             }
             if (isset($allData['descripcion'])) {
                 $rules['descripcion'] = 'nullable|string|max:256';
@@ -206,10 +377,11 @@ class ArticuloController extends Controller
                 $rules['vencimiento'] = 'nullable|integer';
             }
             if ($request->hasFile('fotografia')) {
-                $rules['fotografia'] = 'nullable|image|mimes:jpeg,png,jpg,gif|max:2048';
+                $rules['fotografia'] = 'nullable|image|mimes:jpeg,png,jpg,gif,webp|max:10240'; // 10MB máximo
             }
             if (isset($allData['estado'])) {
-                $rules['estado'] = 'nullable|boolean';
+                // Aceptar boolean, string '0'/'1', o integer 0/1
+                $rules['estado'] = 'nullable';
             }
 
             if (!empty($rules)) {
@@ -239,71 +411,142 @@ class ArticuloController extends Controller
                 'estado'
             ]);
 
-            // Convertir valores numéricos a los tipos correctos
-            $numericFields = [
-                'categoria_id',
-                'proveedor_id',
-                'medida_id',
-                'marca_id',
-                'industria_id',
-                'unidad_envase',
-                'stock',
-                'vencimiento'
+            // IMPORTANTE: La normalización de campos se hace después de obtener solo los campos enviados
+            // Ver más abajo donde se usa $request->only() para preservar datos del servidor
+
+            // Manejo de la fotografía al actualizar (similar al otro sistema pero mejorado)
+            // IMPORTANTE: Procesar la fotografía ANTES del array_filter para que no se elimine
+            // IMPORTANTE: Procesar la fotografía ANTES del array_filter para que no se elimine
+            if ($request->hasFile('fotografia')) {
+                try {
+                    $file = $request->file('fotografia');
+
+                    // Verificar que el archivo es válido
+                    if (!$file->isValid()) {
+                        \Log::error('Archivo de imagen inválido en update', ['error' => $file->getError()]);
+                        throw new \Exception('El archivo de imagen no es válido');
+                    }
+
+                    // Eliminar imagen anterior si existe
+                    if ($articulo->fotografia) {
+                        // Si tiene ruta completa (compatibilidad con datos antiguos)
+                        if (strpos($articulo->fotografia, '/') !== false) {
+                            Storage::disk('public')->delete($articulo->fotografia);
+                        } else {
+                            // Solo nombre de archivo (nueva lógica)
+                            Storage::disk('public')->delete('articulos/' . $articulo->fotografia);
+                        }
+                    }
+
+                    // Generar nombre de archivo: slug del nombre del artículo + timestamp + extensión
+                    $nombreArticulo = $request->input('nombre', $articulo->nombre ?? 'articulo');
+                    $slug = Str::slug($nombreArticulo);
+                    $extension = $file->getClientOriginalExtension();
+                    $filename = $slug . '_' . time() . '.' . $extension;
+
+                    // Asegurar que el directorio existe
+                    $directory = 'articulos';
+                    if (!Storage::disk('public')->exists($directory)) {
+                        Storage::disk('public')->makeDirectory($directory);
+                    }
+
+                    // Guardar la imagen usando Storage
+                    $saved = $file->storeAs($directory, $filename, 'public');
+                    
+                    if (!$saved) {
+                        \Log::error('Error al guardar imagen en update', ['filename' => $filename]);
+                        throw new \Exception('Error al guardar la imagen');
+                    }
+
+                    // Guardar solo el nombre del archivo en la BD (no la ruta completa)
+                    // Se agregará al array $dataToUpdate más abajo
+                    $fotografiaFilename = $filename;
+                    \Log::info('Imagen actualizada exitosamente', [
+                        'filename' => $filename,
+                        'path' => $saved
+                    ]);
+                } catch (\Exception $e) {
+                    \Log::error('Error al procesar imagen en update', [
+                        'error' => $e->getMessage(),
+                        'trace' => $e->getTraceAsString()
+                    ]);
+                    // No lanzar excepción, solo registrar el error
+                    // La imagen anterior se mantendrá si falla
+                }
+            }
+
+            // IMPORTANTE: Solo actualizar campos que realmente se enviaron en el request
+            // Esto preserva los datos existentes del servidor que no se están actualizando
+            // Usar $request->only() para obtener solo los campos que se enviaron explícitamente
+            $camposPermitidos = [
+                'categoria_id', 'proveedor_id', 'medida_id', 'marca_id', 'industria_id',
+                'codigo', 'nombre', 'unidad_envase', 'precio_costo_unid', 'precio_costo_paq',
+                'precio_venta', 'precio_uno', 'precio_dos', 'precio_tres', 'precio_cuatro',
+                'stock', 'descripcion', 'costo_compra', 'vencimiento', 'fotografia', 'estado'
             ];
+            
+            // Obtener solo los campos que fueron enviados explícitamente en el request
+            $dataToUpdate = $request->only($camposPermitidos);
+            
+            // Si se procesó una nueva fotografía, agregarla al array de actualización
+            if (isset($fotografiaFilename)) {
+                $dataToUpdate['fotografia'] = $fotografiaFilename;
+            }
+            
+            // Normalizar campos numéricos (solo los que se enviaron)
+            $numericFields = ['categoria_id', 'proveedor_id', 'medida_id', 'marca_id', 'industria_id', 'unidad_envase', 'stock', 'vencimiento'];
             foreach ($numericFields as $field) {
-                if (isset($data[$field]) && $data[$field] !== null && $data[$field] !== '') {
-                    $data[$field] = (int) $data[$field];
+                if (isset($dataToUpdate[$field]) && $dataToUpdate[$field] !== null && $dataToUpdate[$field] !== '') {
+                    $dataToUpdate[$field] = (int) $dataToUpdate[$field];
                 }
             }
 
-            $decimalFields = [
-                'precio_costo_unid',
-                'precio_costo_paq',
-                'precio_venta',
-                'precio_uno',
-                'precio_dos',
-                'precio_tres',
-                'precio_cuatro',
-                'costo_compra'
-            ];
+            // Normalizar campos decimales (solo los que se enviaron)
+            $decimalFields = ['precio_costo_unid', 'precio_costo_paq', 'precio_venta', 'precio_uno', 'precio_dos', 'precio_tres', 'precio_cuatro', 'costo_compra'];
             foreach ($decimalFields as $field) {
-                if (isset($data[$field]) && $data[$field] !== null && $data[$field] !== '') {
-                    $data[$field] = (float) $data[$field];
+                if (isset($dataToUpdate[$field]) && $dataToUpdate[$field] !== null && $dataToUpdate[$field] !== '') {
+                    $dataToUpdate[$field] = (float) $dataToUpdate[$field];
                 }
             }
 
-            // Filtrar valores null para no sobrescribir con null, pero mantener 0 y false
-            // EXCEPCIÓN: Permitir null para 'codigo' si se envió explícitamente
-            $data = array_filter($data, function ($value, $key) use ($allData) {
-                if ($key === 'codigo' && array_key_exists('codigo', $allData)) {
+            // Normalizar el campo 'estado' si viene como string '0' o '1' (solo si se envió)
+            if (isset($dataToUpdate['estado'])) {
+                if ($dataToUpdate['estado'] === '0' || $dataToUpdate['estado'] === '1') {
+                    $dataToUpdate['estado'] = (bool) $dataToUpdate['estado'];
+                } elseif (is_string($dataToUpdate['estado']) && ($dataToUpdate['estado'] === 'true' || $dataToUpdate['estado'] === 'false')) {
+                    $dataToUpdate['estado'] = $dataToUpdate['estado'] === 'true';
+                }
+            }
+
+            // Normalizar el campo 'codigo': convertir string vacío a null (solo si se envió)
+            if (isset($dataToUpdate['codigo']) && $dataToUpdate['codigo'] === '') {
+                $dataToUpdate['codigo'] = null;
+            }
+            
+            // Filtrar valores null, pero mantener 0 y false
+            $dataToUpdate = array_filter($dataToUpdate, function ($value, $key) {
+                // Permitir codigo null si se envió explícitamente
+                if ($key === 'codigo') {
                     return true;
                 }
+                
+                // Permitir fotografia solo si fue procesada (tiene valor)
+                if ($key === 'fotografia') {
+                    return $value !== null;
+                }
+                
+                // Para otros campos: solo incluir si tienen valor (no null)
                 return $value !== null;
             }, ARRAY_FILTER_USE_BOTH);
-
-            if ($request->hasFile('fotografia')) {
-                if ($articulo->fotografia) {
-                    Storage::disk('public')->delete($articulo->fotografia);
-                }
-
-                $file = $request->file('fotografia');
-                $manager = new ImageManager(new Driver());
-                $image = $manager->read($file);
-
-                if ($image->width() > 300) {
-                    $image->scale(width: 300);
-                }
-
-                $encoded = $image->toWebp(20);
-                $filename = pathinfo($file->getClientOriginalName(), PATHINFO_FILENAME) . '_' . time() . '.webp';
-                $path = 'articulos/' . $filename;
-
-                Storage::disk('public')->put($path, $encoded);
-                $data['fotografia'] = $path;
-            }
+            
+            // Usar solo los campos que se enviaron para actualizar
+            $data = $dataToUpdate;
 
             $articulo->update($data);
             $articulo->load(['categoria', 'proveedor', 'medida', 'marca', 'industria']);
+            
+            // Agregar URL completa de la imagen
+            $this->addImageUrl($articulo);
 
             return response()->json($articulo);
         } catch (\Illuminate\Validation\ValidationException $e) {
@@ -311,10 +554,29 @@ class ArticuloController extends Controller
                 'articulo_id' => $articulo->id,
                 'errors' => $e->errors(),
                 'request_data' => $request->all(),
-                'request_keys' => array_keys($request->all())
+                'request_keys' => array_keys($request->all()),
+                'codigo_actual' => $articulo->codigo,
+                'codigo_enviado' => $request->input('codigo'),
+                'estado_enviado' => $request->input('estado'),
+                'estado_tipo' => gettype($request->input('estado')),
+                'codigo_request' => $request->input('codigo')
             ]);
+            
+            // Retornar los errores de validación en formato JSON
             return response()->json([
                 'message' => 'Error de validación',
+                'errors' => $e->errors()
+            ], 422);
+            $firstError = '';
+            $firstField = '';
+            foreach ($e->errors() as $field => $messages) {
+                $firstField = $field;
+                $firstError = is_array($messages) ? $messages[0] : $messages;
+                break;
+            }
+            
+            return response()->json([
+                'message' => $firstError ? "Error en el campo '{$firstField}': {$firstError}" : 'Error de validación',
                 'errors' => $e->errors(),
                 'request_keys' => array_keys($request->all())
             ], 422);
@@ -336,8 +598,15 @@ class ArticuloController extends Controller
 
     public function destroy(Articulo $articulo)
     {
+        // Eliminar imagen asociada si existe
         if ($articulo->fotografia) {
-            Storage::disk('public')->delete($articulo->fotografia);
+            // Si tiene ruta completa (compatibilidad con datos antiguos)
+            if (strpos($articulo->fotografia, '/') !== false) {
+                Storage::disk('public')->delete($articulo->fotografia);
+            } else {
+                // Solo nombre de archivo (nueva lógica)
+                Storage::disk('public')->delete('articulos/' . $articulo->fotografia);
+            }
         }
         $articulo->delete();
         return response()->json(null, 204);
@@ -385,13 +654,15 @@ class ArticuloController extends Controller
 
             $importedCount = $import->getImportedCount();
             $skippedCount = $import->getSkippedCount();
+            $totalRows = $import->getTotalRows();
 
             return response()->json([
                 'message' => 'Importación completada',
                 'data' => [
-                    'total_procesadas' => $importedCount + $skippedCount,
+                    'total_filas_procesadas' => $totalRows,
                     'importadas_exitosamente' => $importedCount,
-                    'filas_con_errores' => $skippedCount,
+                    'filas_omitidas_duplicados' => $skippedCount,
+                    'filas_con_errores' => $import->getErrorCount(),
                     'errores' => $errors,
                 ],
             ], 200);
@@ -409,15 +680,37 @@ class ArticuloController extends Controller
                 ];
             }
 
+            $importedCount = isset($import) ? $import->getImportedCount() : 0;
+            $skippedCount = isset($import) ? $import->getSkippedCount() : count($errors);
+
             return response()->json([
                 'message' => 'Error de validación en el archivo',
-                'errors' => $errors,
+                'data' => [
+                    'importadas_exitosamente' => $importedCount,
+                    'filas_con_errores' => $skippedCount,
+                    'errores' => $errors,
+                ],
             ], 422);
 
         } catch (\Exception $e) {
+            \Log::error('Error en importación de artículos', [
+                'message' => $e->getMessage(),
+                'file' => $e->getFile(),
+                'line' => $e->getLine(),
+                'trace' => $e->getTraceAsString()
+            ]);
+            
+            // Intentar obtener el conteo de importados incluso si hubo un error
+            $importedCount = isset($import) ? $import->getImportedCount() : 0;
+            $skippedCount = isset($import) ? $import->getSkippedCount() : 0;
+            
             return response()->json([
                 'message' => 'Error al procesar el archivo',
-                'error' => $e->getMessage(),
+                'data' => [
+                    'importadas_exitosamente' => $importedCount,
+                    'filas_con_errores' => $skippedCount,
+                    'error' => config('app.debug') ? $e->getMessage() : 'Error interno del servidor',
+                ],
             ], 500);
         }
     }

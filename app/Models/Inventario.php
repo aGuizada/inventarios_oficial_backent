@@ -19,6 +19,11 @@ class Inventario extends Model
         'cantidad',
     ];
 
+    protected $casts = [
+        'saldo_stock' => 'decimal:3',
+        'cantidad' => 'decimal:3',
+    ];
+
     public function almacen()
     {
         return $this->belongsTo(Almacen::class);

@@ -65,7 +65,8 @@ class RolController extends Controller
             'estado' => 'boolean',
         ]);
 
-        $rol->update($request->all());
+        $camposPermitidos = ['nombre', 'descripcion', 'estado'];
+        $rol->update($request->only($camposPermitidos));
 
         return response()->json($rol);
     }

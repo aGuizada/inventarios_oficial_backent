@@ -24,7 +24,7 @@ return new class extends Migration {
             $table->decimal('precio_dos', 15, 4)->nullable();
             $table->decimal('precio_tres', 15, 4)->nullable();
             $table->decimal('precio_cuatro', 15, 4)->nullable();
-            $table->integer('stock');
+            $table->decimal('stock', 11, 3)->default(0);
             $table->string('descripcion', 256)->nullable();
             $table->boolean('estado')->default(1);
             $table->decimal('costo_compra', 10, 2);

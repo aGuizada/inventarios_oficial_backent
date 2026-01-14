@@ -186,7 +186,12 @@ class TraspasoController extends Controller
             'usuario_receptor_id' => 'nullable|exists:users,id',
         ]);
 
-        $traspaso->update($request->all());
+        $camposPermitidos = [
+            'almacen_origen_id', 'almacen_destino_id', 'fecha_solicitud', 'fecha_entrega',
+            'tipo_traspaso', 'estado', 'motivo', 'observaciones',
+            'usuario_aprobador_id', 'usuario_receptor_id'
+        ];
+        $traspaso->update($request->only($camposPermitidos));
 
         return response()->json($traspaso);
     }

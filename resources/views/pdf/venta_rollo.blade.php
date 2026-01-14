@@ -5,90 +5,220 @@
     <meta charset="utf-8">
     <title>Ticket de Venta</title>
     <style>
-        body {
-            font-family: 'Courier New', Courier, monospace;
-            font-size: 10px;
-            margin: 0;
-            padding: 5px;
-            width: 100%;
-        }
+@page {
+    size: 80mm auto;
+    margin: 0;
+}
 
-        .header {
-            text-align: center;
-            margin-bottom: 10px;
-        }
+body {
+    width: 72mm;       /* 👈 ESTE ES EL VALOR CLAVE */
+    max-width: 72mm;
+    margin: 0;
+    padding-left: 2mm;
+    padding-right: 8mm; /* margen de seguridad */
+    font-family: Courier, monospace;
+    font-size: 9px;
+}
 
-        .company-name {
-            font-size: 12px;
-            font-weight: bold;
-        }
+.header, .footer {
+    text-align: center;
+    margin-bottom: 5px;
+}
 
-        .info {
-            margin-bottom: 10px;
-            border-bottom: 1px dashed #000;
-            padding-bottom: 5px;
-        }
+.company-name {
+    font-weight: bold;
+    font-size: 16px;
+    margin-bottom: 3px;
+    display: block;
+}
 
-        .items {
-            width: 100%;
-            margin-bottom: 10px;
-            border-bottom: 1px dashed #000;
-        }
+.info {
+    margin: 5px 0;
+    border-bottom: 1px dashed #000;
+    padding-bottom: 3px;
+}
 
-        .items th {
-            text-align: left;
-            border-bottom: 1px solid #000;
-        }
+table {
+    width: 100%;
+    border-collapse: collapse;
+}
 
-        .totals {
-            text-align: right;
-            margin-bottom: 10px;
-        }
+th, td {
+    padding-left: 1.5mm;
+    padding-right: 1.5mm;
+}
 
-        .footer {
-            text-align: center;
-            font-size: 9px;
-        }
-    </style>
+
+th {
+    font-weight: bold;
+    letter-spacing: 0.5px;
+}
+
+
+.col-cant {
+    width: 10%;
+    text-align: center;
+    padding-left: 0;
+    padding-right: 1mm;
+}
+
+.col-desc {
+    width: 42%;
+    text-align: left;
+    padding-left: 1mm;
+}
+
+.col-pu {
+    width: 22%;
+    text-align: right;
+    padding-right: 1mm;
+}
+
+.col-total {
+    width: 18%;
+    text-align: right;
+    padding-right: 4mm; /* margen de seguridad */
+}
+
+
+.totals {
+    margin-top: 3px;
+    padding-right: 6mm;
+    text-align: right;
+    font-weight: bold;
+    font-size: 10px;
+}
+
+.total-letras {
+    margin-top: 3px;
+    font-size: 8px;
+    text-align: left;
+    line-height: 1.2;
+}
+
+.payment-method {
+    margin-top: 2px;
+    font-size: 8px;
+    text-align: left;
+}
+</style>
+
 </head>
 
 <body>
     <div class="header">
-        <div class="company-name">INVENTARIOS OFICIAL</div>
-        <div>NIT: 123456789</div>
-        <div>Tel: 555-1234</div>
+        <div class="company-name"><strong>MC AUTOPARTS</strong></div>
+
+        <div>Nº Comprobante: {{ $venta->num_comprobante }}</div>
     </div>
 
     <div class="info">
-        <div>F: {{ $venta->fecha_hora }}</div>
-        <div>Ticket: {{ $venta->num_comprobante }}</div>
-        <div>Cli: {{ Str::limit($venta->cliente->nombre, 20) }}</div>
-        <div>Vend: {{ Str::limit($venta->user->name, 15) }}</div>
-    </div>
+        <div>Fecha: {{ $venta->fecha_hora }}</div>
 
-    <table class="items">
-        <thead>
-            <tr>
-                <th style="width: 10%">Cant</th>
-                <th style="width: 50%">Desc</th>
-                <th style="width: 20%">P.U.</th>
-                <th style="width: 20%">Total</th>
-            </tr>
-        </thead>
-        <tbody>
-            @foreach($venta->detalles as $detalle)
-                <tr>
-                    <td>{{ $detalle->cantidad }}</td>
-                    <td>{{ Str::limit($detalle->articulo->nombre, 15) }}</td>
-                    <td>{{ number_format($detalle->precio, 2) }}</td>
-                    <td>{{ number_format(($detalle->cantidad * $detalle->precio) - $detalle->descuento, 2) }}</td>
-                </tr>
-            @endforeach
-        </tbody>
-    </table>
+                <div>Cliente: {{ $venta->cliente ? Str::limit($venta->cliente->nombre, 20) : 'sin nombre' }}</div>
+                
+    </div>
+    
+    <table>
+    <thead>
+        <tr> 
+            <th class="col-cant">Cant</th>
+            <th class="col-desc">Detalle</th>
+            <th class="col-pu">P.Unt.</th>
+            <th class="col-total">Subtotal</th>
+        </tr>
+    </thead>
+    <tbody>
+        @foreach($venta->detalles as $detalle)
+        <tr>
+            <td class="col-cant">
+                @php
+                    $unidad = strtolower(trim($detalle->unidad_medida ?? 'unidad'));
+                    $cantidad = (float) $detalle->cantidad;
+                    
+                    // Verificar si el artículo tiene medida en metros o centímetros
+                    $esMetroOCentimetro = false;
+                    if ($detalle->articulo && $detalle->articulo->medida) {
+                        $nombreMedida = strtolower(trim($detalle->articulo->medida->nombre_medida ?? $detalle->articulo->medida->nombre ?? ''));
+                        if (strpos($nombreMedida, 'metro') !== false || strpos($nombreMedida, 'centimetro') !== false || strpos($nombreMedida, 'centímetro') !== false) {
+                            $esMetroOCentimetro = true;
+                        }
+                    }
+                    
+                    // Verificar si la cantidad tiene decimales significativos
+                    // Redondear a 3 decimales primero para evitar problemas de precisión
+                    $cantidadRedondeada = round($cantidad, 3);
+                    $parteEntera = floor($cantidadRedondeada);
+                    $parteDecimal = abs($cantidadRedondeada - $parteEntera);
+                    $tieneDecimales = $parteDecimal > 0.0001;
+                    
+                    // SIEMPRE mostrar con 2 decimales si:
+                    // 1. La unidad es metro o centímetro
+                    // 2. El artículo tiene medida en metros/centímetros
+                    // 3. La cantidad tiene decimales (aunque la unidad sea "Unidad")
+                    // Si tiene decimales, SIEMPRE mostrar con 2 decimales sin importar la unidad
+                    if ($unidad === 'centimetro' || $unidad === 'metro' || $unidad === 'metros' || $esMetroOCentimetro || $tieneDecimales) {
+                        // Siempre mostrar con 2 decimales
+                        echo number_format($cantidad, 2, '.', '');
+                    } else {
+                        // Solo para Unidad y Paquete sin decimales, mostrar como entero
+                        echo number_format($cantidad, 0, '.', '');
+                    }
+                @endphp
+            </td>
+            <td class="col-desc">
+                {{ Str::limit($detalle->articulo->nombre, 100) }}
+                @if($detalle->articulo->codigo)
+                    ({{ $detalle->articulo->codigo }})
+                @endif
+                @if($detalle->articulo->marca && $detalle->articulo->marca->nombre)
+                    <br><span style="font-size: 7px; color: #666;">Marca: {{ Str::limit($detalle->articulo->marca->nombre, 30) }}</span>
+                @endif
+            </td>
+            <td class="col-pu">{{ number_format($detalle->precio, 2) }}</td>
+            <td class="col-total">
+                @php
+                    $subtotalSinDescuento = $detalle->cantidad * $detalle->precio;
+                    $descuento = (float) ($detalle->descuento ?? 0);
+                    $subtotalConDescuento = $subtotalSinDescuento - $descuento;
+                @endphp
+                @if($descuento > 0)
+                    <div style="font-size: 7px; color: #666; text-decoration: line-through;">
+                        {{ number_format($subtotalSinDescuento, 2) }}
+                    </div>
+                    <div style="font-weight: bold;">
+                        {{ number_format($subtotalConDescuento, 2) }}
+                    </div>
+                    <div style="font-size: 7px; color: #d32f2f;">
+                        Desc: -{{ number_format($descuento, 2) }}
+                    </div>
+                @else
+                    {{ number_format($subtotalConDescuento, 2) }}
+                @endif
+            </td>
+        </tr>
+        @endforeach
+    </tbody>
+</table>
+
 
     <div class="totals">
         <div><strong>TOTAL: {{ number_format($venta->total, 2) }}</strong></div>
+    </div>
+
+    <div class="total-letras">
+        @php
+            $total = (float) $venta->total;
+            $parteEntera = (int) $total;
+            $parteDecimal = round(($total - $parteEntera) * 100);
+            $centavos = str_pad($parteDecimal, 2, '0', STR_PAD_LEFT);
+            
+            // Usar el número en letras que viene del controlador
+            // Si no viene, mostrar solo el número
+            $textoNumero = isset($numeroEnLetras) && !empty($numeroEnLetras) ? $numeroEnLetras : 'CERO';
+        @endphp
+        <div><strong>SON:</strong> {{ $textoNumero }} {{ $centavos }}/100 Bolivianos</div>
+        
     </div>
 
     <div class="footer">

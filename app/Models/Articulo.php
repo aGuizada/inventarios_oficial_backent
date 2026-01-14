@@ -35,6 +35,10 @@ class Articulo extends Model
         'fotografia',
     ];
 
+    protected $casts = [
+        'stock' => 'decimal:3',
+    ];
+
     public function categoria()
     {
         return $this->belongsTo(Categoria::class);

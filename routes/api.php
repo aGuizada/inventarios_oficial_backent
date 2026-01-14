@@ -37,6 +37,7 @@ use App\Http\Controllers\API\TransaccionCajaController;
 use App\Http\Controllers\API\TraspasoController;
 use App\Http\Controllers\API\VentaController;
 use App\Http\Controllers\API\DashboardController;
+use App\Http\Controllers\API\ImageController;
 
 /*
 |--------------------------------------------------------------------------
@@ -270,3 +271,6 @@ Route::get('/health', function () {
     ]);
 });
 
+// Ruta pública para servir imágenes de artículos (fallback si el enlace simbólico no funciona)
+Route::get('/images/articulos/{filename}', [ImageController::class, 'serveArticuloImage'])
+    ->where('filename', '.*');

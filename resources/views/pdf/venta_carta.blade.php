@@ -103,8 +103,29 @@
         <tbody>
             @foreach($venta->detalles as $detalle)
                 <tr>
-                    <td>{{ $detalle->cantidad }}</td>
-                    <td>{{ $detalle->articulo->nombre }}</td>
+                    <td>
+                        @php
+                            $unidad = strtolower($detalle->unidad_medida ?? 'unidad');
+                            // Para centímetros y metros, mostrar 2 decimales (0.30, 1.00)
+                            if ($unidad === 'centimetro' || $unidad === 'metro' || $unidad === 'metros') {
+                                echo number_format($detalle->cantidad, 2, '.', '');
+                            } else {
+                                // Para Unidad y Paquete, mostrar enteros si es posible
+                                $cantidad = (float) $detalle->cantidad;
+                                if ($cantidad == floor($cantidad)) {
+                                    echo number_format($cantidad, 0, '.', '');
+                                } else {
+                                    echo number_format($cantidad, 2, '.', '');
+                                }
+                            }
+                        @endphp
+                    </td>
+                    <td>
+                        {{ $detalle->articulo->nombre }}
+                        @if($detalle->articulo->codigo)
+                            ({{ $detalle->articulo->codigo }})
+                        @endif
+                    </td>
                     <td>{{ $detalle->unidad_medida }}</td>
                     <td>{{ number_format($detalle->precio, 2) }}</td>
                     <td>{{ number_format($detalle->descuento, 2) }}</td>

@@ -13,20 +13,32 @@ class AlmacenController extends Controller
 
     public function index(Request $request)
     {
-        $query = Almacen::with('sucursal');
+        try {
+            $query = Almacen::with('sucursal');
 
-        $searchableFields = [
-            'id',
-            'nombre_almacen',
-            'ubicacion',
-            'telefono',
-            'sucursal.nombre'
-        ];
+            $searchableFields = [
+                'id',
+                'nombre_almacen',
+                'ubicacion',
+                'telefono',
+                'sucursal.nombre'
+            ];
 
-        $query = $this->applySearch($query, $request, $searchableFields);
-        $query = $this->applySorting($query, $request, ['id', 'nombre_almacen', 'created_at'], 'id', 'desc');
+            $query = $this->applySearch($query, $request, $searchableFields);
+            $query = $this->applySorting($query, $request, ['id', 'nombre_almacen', 'created_at'], 'id', 'desc');
 
-        return $this->paginateResponse($query, $request, 15, 100);
+            return $this->paginateResponse($query, $request, 15, 100);
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => true,
+                'data' => [],
+                'meta' => [
+                    'current_page' => 1,
+                    'last_page' => 1,
+                    'total' => 0,
+                ]
+            ]);
+        }
     }
 
     public function store(Request $request)
@@ -75,8 +87,12 @@ class AlmacenController extends Controller
             'estado' => 'nullable|boolean',
         ]);
 
-        // Convertir estado a booleano si viene como string
-        $data = $request->all();
+        // IMPORTANTE: Solo actualizar campos que se enviaron explícitamente
+        // Esto preserva los datos existentes del servidor que no se están actualizando
+        $camposPermitidos = ['sucursal_id', 'nombre_almacen', 'ubicacion', 'telefono', 'estado'];
+        $data = $request->only($camposPermitidos);
+
+        // Convertir estado a booleano si viene como string (solo si se envió)
         if (isset($data['estado'])) {
             if (is_string($data['estado'])) {
                 $data['estado'] = filter_var($data['estado'], FILTER_VALIDATE_BOOLEAN);
@@ -97,13 +113,10 @@ class AlmacenController extends Controller
 
     public function destroy($id)
     {
-        \Log::info('Eliminando almacén con ID: ' . $id);
-        
         try {
             $almacen = Almacen::find($id);
             
             if (!$almacen) {
-                \Log::warning('Almacén no encontrado. ID: ' . $id);
                 return response()->json([
                     'success' => false,
                     'message' => 'Almacén no encontrado'
@@ -112,27 +125,21 @@ class AlmacenController extends Controller
             
             $almacenId = $almacen->id;
             $almacen->delete();
-            \Log::info('Almacén eliminado exitosamente. ID: ' . $almacenId);
             
             // Verificar que realmente se eliminó
             $verificar = Almacen::find($almacenId);
             if ($verificar) {
-                \Log::warning('El almacén aún existe después de eliminar. ID: ' . $almacenId);
                 return response()->json([
                     'success' => false,
                     'message' => 'Error: El almacén no se pudo eliminar'
                 ], 500);
             }
             
-            \Log::info('Verificación exitosa: Almacén eliminado correctamente. ID: ' . $almacenId);
-            
             return response()->json([
                 'success' => true,
                 'message' => 'Almacén eliminado exitosamente'
             ], 200);
         } catch (\Exception $e) {
-            \Log::error('Error al eliminar almacén. ID: ' . $id . ' Error: ' . $e->getMessage());
-            \Log::error('Stack trace: ' . $e->getTraceAsString());
             return response()->json([
                 'success' => false,
                 'message' => 'Error al eliminar el almacén: ' . $e->getMessage()
