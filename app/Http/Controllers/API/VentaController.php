@@ -41,26 +41,29 @@ class VentaController extends Controller
     private function addImageUrl($articulo)
     {
         if ($articulo->fotografia) {
+            // Obtener la URL base y asegurarse de que no termine en /api
             $baseUrl = rtrim(config('app.url'), '/');
+            // Si termina en /api, removerlo para evitar duplicación
+            if (substr($baseUrl, -4) === '/api') {
+                $baseUrl = rtrim(substr($baseUrl, 0, -4), '/');
+            }
             
             // Si ya tiene ruta completa (compatibilidad con datos antiguos)
             if (strpos($articulo->fotografia, '/') !== false) {
-                // Intentar primero con la ruta estándar de storage
-                $storagePath = '/storage/' . ltrim($articulo->fotografia, '/');
-                $articulo->fotografia_url = $baseUrl . $storagePath;
+                // Extraer solo el nombre del archivo
+                $filename = basename($articulo->fotografia);
             } else {
                 // Solo nombre de archivo (nueva lógica)
-                // Intentar primero con la ruta estándar de storage
-                $storagePath = '/storage/articulos/' . $articulo->fotografia;
-                $articulo->fotografia_url = $baseUrl . $storagePath;
-                
-                // Fallback: usar endpoint de API si el enlace simbólico no funciona
-                // El frontend puede verificar si la imagen falla y usar esta URL alternativa
-                $articulo->fotografia_url_fallback = $baseUrl . '/api/images/articulos/' . $articulo->fotografia;
+                $filename = $articulo->fotografia;
             }
+            
+            // Codificar el nombre del archivo para la URL (maneja espacios y caracteres especiales)
+            $filenameEncoded = rawurlencode($filename);
+            
+            // Usar endpoint de API para servir la imagen directamente desde storage
+            $articulo->fotografia_url = $baseUrl . '/api/articulos/imagen/' . $filenameEncoded;
         } else {
             $articulo->fotografia_url = null;
-            $articulo->fotografia_url_fallback = null;
         }
         return $articulo;
     }
@@ -172,6 +175,13 @@ class VentaController extends Controller
     public function productosInventario(Request $request)
     {
         try {
+            // Obtener la URL base y asegurarse de que no termine en /api
+            $baseUrl = rtrim(config('app.url'), '/');
+            // Si termina en /api, removerlo para evitar duplicación
+            if (substr($baseUrl, -4) === '/api') {
+                $baseUrl = rtrim(substr($baseUrl, 0, -4), '/');
+            }
+            
             $almacenId = $request->get('almacen_id');
             $incluirSinStock = $request->get('incluir_sin_stock', false);
 
@@ -233,10 +243,31 @@ class VentaController extends Controller
             $perPage = min((int) $request->get('per_page', 24), $maxPerPage);
             $paginated = $query->paginate($perPage);
 
-            $paginated->getCollection()->transform(function ($inventario) {
+            $paginated->getCollection()->transform(function ($inventario) use ($baseUrl) {
                 // Usar el mismo método que ArticuloController
                 if ($inventario->articulo) {
+                    // Agregar fotografia_url al objeto
                     $this->addImageUrl($inventario->articulo);
+                    
+                    // Obtener fotografia_url antes de convertir a array
+                    $fotografiaUrl = $inventario->articulo->fotografia_url ?? null;
+                    
+                    // Si no se generó fotografia_url, generarla manualmente
+                    if (!$fotografiaUrl && $inventario->articulo->fotografia) {
+                        $filename = $inventario->articulo->fotografia;
+                        if (strpos($filename, '/') !== false) {
+                            $filename = basename($filename);
+                        }
+                        $fotografiaUrl = $baseUrl . '/api/articulos/imagen/' . rawurlencode($filename);
+                    }
+                    
+                    // Convertir a array
+                    $articuloArray = $inventario->articulo->toArray();
+                    
+                    // Agregar fotografia_url explícitamente al array (siempre)
+                    $articuloArray['fotografia_url'] = $fotografiaUrl;
+                } else {
+                    $articuloArray = null;
                 }
                 
                 return [
@@ -245,7 +276,7 @@ class VentaController extends Controller
                     'almacen_id' => $inventario->almacen_id,
                     'stock_disponible' => (float) ($inventario->saldo_stock ?? 0),
                     'cantidad' => (float) ($inventario->cantidad ?? 0),
-                    'articulo' => $inventario->articulo,
+                    'articulo' => $articuloArray,
                     'almacen' => $inventario->almacen,
                 ];
             });
@@ -265,10 +296,31 @@ class VentaController extends Controller
         // Comportamiento anterior (sin paginación)
         $inventarios = $query->get();
 
-        $productos = $inventarios->map(function ($inventario) {
+        $productos = $inventarios->map(function ($inventario) use ($baseUrl) {
             // Usar el mismo método que ArticuloController
             if ($inventario->articulo) {
+                // Agregar fotografia_url al objeto
                 $this->addImageUrl($inventario->articulo);
+                
+                // Obtener fotografia_url antes de convertir a array
+                $fotografiaUrl = $inventario->articulo->fotografia_url ?? null;
+                
+                // Si no se generó fotografia_url, generarla manualmente
+                if (!$fotografiaUrl && $inventario->articulo->fotografia) {
+                    $filename = $inventario->articulo->fotografia;
+                    if (strpos($filename, '/') !== false) {
+                        $filename = basename($filename);
+                    }
+                    $fotografiaUrl = $baseUrl . '/api/articulos/imagen/' . rawurlencode($filename);
+                }
+                
+                // Convertir a array
+                $articuloArray = $inventario->articulo->toArray();
+                
+                // Agregar fotografia_url explícitamente al array
+                $articuloArray['fotografia_url'] = $fotografiaUrl;
+            } else {
+                $articuloArray = null;
             }
             
             return [
@@ -277,7 +329,7 @@ class VentaController extends Controller
                 'almacen_id' => $inventario->almacen_id,
                 'stock_disponible' => (float) ($inventario->saldo_stock ?? 0),
                 'cantidad' => (float) ($inventario->cantidad ?? 0),
-                'articulo' => $inventario->articulo,
+                'articulo' => $articuloArray,
                 'almacen' => $inventario->almacen,
             ];
         });

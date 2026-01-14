@@ -30,24 +30,172 @@ class ArticuloController extends Controller
     private function addImageUrl($articulo)
     {
         if ($articulo->fotografia) {
+            // Obtener la URL base y asegurarse de que no termine en /api
             $baseUrl = rtrim(config('app.url'), '/');
+            // Si termina en /api, removerlo para evitar duplicación
+            if (substr($baseUrl, -4) === '/api') {
+                $baseUrl = rtrim(substr($baseUrl, 0, -4), '/');
+            }
 
             // Si ya tiene ruta completa (compatibilidad con datos antiguos)
             if (strpos($articulo->fotografia, '/') !== false) {
                 // Extraer solo el nombre del archivo
                 $filename = basename($articulo->fotografia);
-                // Usar endpoint de API para servir la imagen directamente desde storage
-                $articulo->fotografia_url = $baseUrl . '/api/images/articulos/' . $filename;
             } else {
                 // Solo nombre de archivo (nueva lógica)
-                // Usar endpoint de API para servir la imagen directamente desde storage
-                // Esto funciona incluso si el enlace simbólico no está creado
-                $articulo->fotografia_url = $baseUrl . '/api/images/articulos/' . $articulo->fotografia;
+                $filename = $articulo->fotografia;
             }
+
+            // Codificar el nombre del archivo para la URL (maneja espacios y caracteres especiales)
+            $filenameEncoded = rawurlencode($filename);
+
+            // Usar endpoint de API para servir la imagen directamente desde storage
+            $articulo->fotografia_url = $baseUrl . '/api/articulos/imagen/' . $filenameEncoded;
         } else {
             $articulo->fotografia_url = null;
         }
         return $articulo;
+    }
+
+    /**
+     * Sirve imágenes de artículos directamente desde storage
+     * No requiere storage link
+     */
+    public function serveImage($filename)
+    {
+        try {
+            // Decodificar el nombre del archivo si viene codificado
+            $originalFilename = urldecode($filename);
+
+            // Limpiar el nombre del archivo para seguridad
+            $filename = basename($originalFilename);
+
+            // Rutas base donde buscar
+            $basePaths = [
+                storage_path('app/public/articulos'),
+                public_path('storage/articulos'),
+                storage_path('app/public'),
+                public_path('storage'),
+            ];
+
+            // Variaciones del nombre de archivo a buscar
+            $filenameVariations = [
+                $filename,  // Nombre original
+                urldecode($filename),  // Decodificado
+                rawurldecode($filename),  // Raw decoded
+            ];
+
+            $filePath = null;
+
+            // Buscar el archivo en todas las ubicaciones y variaciones posibles
+            foreach ($basePaths as $basePath) {
+                $articulosPath = $basePath . '/articulos';
+
+                // Buscar en la carpeta articulos
+                if (is_dir($articulosPath)) {
+                    foreach ($filenameVariations as $variation) {
+                        $testPath = $articulosPath . '/' . $variation;
+                        if (file_exists($testPath) && is_file($testPath)) {
+                            $filePath = $testPath;
+                            break 2; // Salir de ambos loops
+                        }
+                    }
+                }
+
+                // También buscar directamente en la base path
+                foreach ($filenameVariations as $variation) {
+                    $testPath = $basePath . '/' . $variation;
+                    if (file_exists($testPath) && is_file($testPath)) {
+                        $filePath = $testPath;
+                        break 2; // Salir de ambos loops
+                    }
+                }
+            }
+
+            // Si aún no se encontró, intentar buscar usando Storage facade
+            if (!$filePath) {
+                $storagePaths = [
+                    'articulos/' . $filename,
+                    $filename,
+                ];
+
+                foreach ($storagePaths as $path) {
+                    if (Storage::disk('public')->exists($path)) {
+                        $fullPath = Storage::disk('public')->path($path);
+                        if (file_exists($fullPath) && is_file($fullPath)) {
+                            $filePath = $fullPath;
+                            break;
+                        }
+                    }
+                }
+            }
+
+            // Si aún no se encontró, buscar por coincidencia parcial (por si el nombre tiene variaciones)
+            if (!$filePath) {
+                $articulosDir = storage_path('app/public/articulos');
+                if (is_dir($articulosDir)) {
+                    $files = scandir($articulosDir);
+                    $searchBase = pathinfo($filename, PATHINFO_FILENAME);
+                    $searchExt = pathinfo($filename, PATHINFO_EXTENSION);
+
+                    foreach ($files as $file) {
+                        if ($file === '.' || $file === '..')
+                            continue;
+
+                        $fileBase = pathinfo($file, PATHINFO_FILENAME);
+                        $fileExt = pathinfo($file, PATHINFO_EXTENSION);
+
+                        // Si coincide el nombre base y la extensión (ignorando timestamp)
+                        if (
+                            strpos($fileBase, $searchBase) !== false &&
+                            strtolower($fileExt) === strtolower($searchExt)
+                        ) {
+                            $testPath = $articulosDir . '/' . $file;
+                            if (file_exists($testPath) && is_file($testPath)) {
+                                $filePath = $testPath;
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Si aún no se encontró, devolver 404
+            if (!$filePath) {
+                return response()->json([
+                    'error' => 'Imagen no encontrada',
+                    'filename' => $filename,
+                    'original_filename' => $originalFilename,
+                    'hint' => 'El archivo no existe en el servidor. Verifique que el archivo fue subido correctamente.'
+                ], 404);
+            }
+
+            // Determinar el tipo MIME
+            $mimeType = mime_content_type($filePath);
+            if (!$mimeType) {
+                $extension = pathinfo($filePath, PATHINFO_EXTENSION);
+                $mimeTypes = [
+                    'jpg' => 'image/jpeg',
+                    'jpeg' => 'image/jpeg',
+                    'png' => 'image/png',
+                    'gif' => 'image/gif',
+                    'webp' => 'image/webp',
+                ];
+                $mimeType = $mimeTypes[strtolower($extension)] ?? 'image/jpeg';
+            }
+
+            // Devolver el archivo con los headers correctos
+            return response()->file($filePath, [
+                'Content-Type' => $mimeType,
+                'Cache-Control' => 'public, max-age=31536000',
+            ]);
+        } catch (\Exception $e) {
+            return response()->json([
+                'error' => 'Error al cargar la imagen',
+                'message' => $e->getMessage(),
+                'filename' => $filename ?? 'unknown'
+            ], 500);
+        }
     }
 
     /**
