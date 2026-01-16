@@ -23,6 +23,15 @@ class CategoriaController extends Controller
             ];
 
             $query = $this->applySearch($query, $request, $searchableFields);
+
+            if ($request->has('has_articulos') && $request->boolean('has_articulos')) {
+                $query->has('articulos');
+            }
+
+            if ($request->has('estado')) {
+                $query->where('estado', $request->boolean('estado'));
+            }
+
             $query = $this->applySorting($query, $request, ['id', 'nombre', 'created_at'], 'id', 'desc');
 
             return $this->paginateResponse($query, $request, 15, 100);
