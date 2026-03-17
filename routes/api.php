@@ -60,10 +60,21 @@ Route::prefix('auth')->group(function () {
 Route::get('articulos/imagen/{filename}', [ArticuloController::class, 'serveImage'])
     ->where('filename', '.*');
 
+// Ruta pública para servir imágenes/logo de marcas
+Route::get('marcas/imagen/{filename}', [MarcaController::class, 'serveImage'])
+    ->where('filename', '.*');
+
+// Ruta pública para servir avatares de usuarios
+Route::get('users/imagen/{filename}', [UserController::class, 'serveAvatar'])
+    ->where('filename', '.*');
+
 // Rutas protegidas (requieren autenticación)
 Route::middleware('auth:sanctum')->group(function () {
     // Logout
     Route::post('/auth/logout', [AuthController::class, 'logout']);
+
+    // Perfil del usuario autenticado (actualizar nombre, email, teléfono, avatar)
+    Route::put('me', [UserController::class, 'updateProfile']);
 
     // Usuarios
     Route::get('users/export-excel', [UserController::class, 'exportExcel']);

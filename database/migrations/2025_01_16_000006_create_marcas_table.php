@@ -12,6 +12,7 @@ return new class extends Migration {
             $table->string('nombre', 50);
             $table->tinyInteger('estado')->default(1);
             $table->timestamps();
+            $table->string('logo', 255)->nullable()->after('nombre');
         });
     }
 

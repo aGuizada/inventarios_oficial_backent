@@ -32,7 +32,7 @@ return [
 
         'allowed_headers' => ['*'],
 
-        'exposed_headers' => [],
+        'exposed_headers' => ['Cache-Control', 'Pragma'],
 
         'max_age' => 86400,
 

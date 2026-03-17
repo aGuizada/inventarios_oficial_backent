@@ -34,6 +34,8 @@ class AuthController extends Controller
             'estado' => $request->estado ?? true,
         ]);
 
+        $user->load('rol');
+
         $token = $user->createToken('auth_token')->plainTextToken;
 
         return response()->json([
@@ -63,6 +65,8 @@ class AuthController extends Controller
                 'message' => 'Usuario inactivo'
             ], 403);
         }
+
+        $user->load('rol');
 
         $token = $user->createToken('auth_token')->plainTextToken;
 

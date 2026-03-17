@@ -8,6 +8,7 @@ use App\Models\Venta;
 use App\Models\DetalleVenta;
 use App\Models\Inventario;
 use App\Models\Articulo;
+use App\Models\Almacen;
 use App\Models\Caja;
 use App\Models\TipoVenta;
 use App\Models\TipoPago;
@@ -169,8 +170,8 @@ class VentaController extends Controller
     }
 
     /**
-     * Obtener productos disponibles en inventario (con stock > 0)
-     * Solo muestra productos con stock disponible mayor a 0
+     * Obtener productos en inventario para ventas (con y sin stock).
+     * Incluye todos los registros del almacén; no se eliminan filas con stock 0.
      */
     public function productosInventario(Request $request)
     {
@@ -182,11 +183,95 @@ class VentaController extends Controller
                 $baseUrl = rtrim(substr($baseUrl, 0, -4), '/');
             }
             
-            $almacenId = $request->get('almacen_id');
-            $incluirSinStock = $request->get('incluir_sin_stock', false);
+            // Asegurar tipo entero para almacen_id (puede venir como string en query)
+            $almacenId = $request->has('almacen_id') ? (int) $request->get('almacen_id') : null;
+            // Asegurar que incluir_sin_stock se interprete bien (query string "true" -> true)
+            $incluirSinStock = filter_var($request->get('incluir_sin_stock', false), FILTER_VALIDATE_BOOLEAN);
 
-            // Optimizar carga de relaciones: solo cargar campos necesarios
-            // Nota: No usar select() en el modelo principal para evitar problemas con relaciones
+            // Vista tipo catálogo: TODOS los productos (con y sin stock), uno por artículo, stock del almacén seleccionado
+            if ($almacenId > 0) {
+                $articulosQuery = Articulo::with([
+                    'categoria:id,nombre',
+                    'marca:id,nombre',
+                    'medida:id,nombre_medida',
+                    'industria:id,nombre',
+                    'proveedor:id,nombre',
+                ]);
+                // Sin whereHas('inventarios'): listar todos los artículos del sistema (también los que tienen 0 en inventario)
+
+                // Filtro por marca: solo artículos de esa marca (tabla articulos)
+                $marcaIdParam = $request->input('marca_id');
+                if ($marcaIdParam !== null && $marcaIdParam !== '' && (int) $marcaIdParam > 0) {
+                    $articulosQuery->where('articulos.marca_id', (int) $marcaIdParam);
+                }
+
+                $searchableFields = ['nombre', 'codigo', 'marca.nombre', 'categoria.nombre'];
+                $articulosQuery = $this->applySearch($articulosQuery, $request, $searchableFields);
+
+                // Ordenar por stock en este almacén: primero los que tienen stock, después los sin stock
+                $articulosQuery->leftJoin(DB::raw('(SELECT articulo_id, CAST(COALESCE(SUM(saldo_stock), 0) AS DECIMAL(11,3)) as total FROM inventarios WHERE almacen_id = ' . (int) $almacenId . ' GROUP BY articulo_id) as stock_almacen'), 'articulos.id', '=', 'stock_almacen.articulo_id')
+                    ->orderByRaw('COALESCE(stock_almacen.total, 0) DESC')
+                    ->orderBy('articulos.id', 'desc')
+                    ->select('articulos.*');
+
+                $perPage = min((int) $request->get('per_page', 24), $incluirSinStock ? 10000 : 100);
+                $perPage = max(1, $perPage);
+                // Al filtrar por marca, mostrar más productos en la primera página (mejor UX cuando hay muchos)
+                if ($marcaIdParam !== null && $marcaIdParam !== '' && (int) $marcaIdParam > 0 && $perPage < 100) {
+                    $perPage = min(100, $incluirSinStock ? 10000 : 100);
+                }
+                $paginated = $articulosQuery->paginate($perPage);
+                $articuloIds = $paginated->pluck('id')->toArray();
+
+                // Una sola consulta para stock y primer inventario_id (más rápido que dos consultas)
+                $inventarioAgg = Inventario::where('almacen_id', $almacenId)
+                    ->whereIn('articulo_id', $articuloIds)
+                    ->selectRaw('articulo_id, CAST(COALESCE(SUM(saldo_stock), 0) AS DECIMAL(11,3)) as total, MIN(id) as first_id')
+                    ->groupBy('articulo_id')
+                    ->get();
+                $stocks = $inventarioAgg->pluck('total', 'articulo_id');
+                $primerInventarioId = $inventarioAgg->pluck('first_id', 'articulo_id');
+
+                $almacen = Almacen::find($almacenId);
+                $almacenArray = $almacen ? $almacen->toArray() : null;
+
+                $items = $paginated->getCollection()->map(function ($articulo) use ($baseUrl, $almacenId, $stocks, $primerInventarioId, $almacenArray) {
+                    $this->addImageUrl($articulo);
+                    $fotografiaUrl = $articulo->fotografia_url ?? null;
+                    if (!$fotografiaUrl && $articulo->fotografia) {
+                        $filename = strpos($articulo->fotografia, '/') !== false ? basename($articulo->fotografia) : $articulo->fotografia;
+                        $fotografiaUrl = $baseUrl . '/api/articulos/imagen/' . rawurlencode($filename);
+                    }
+                    $articuloArray = $articulo->toArray();
+                    $articuloArray['fotografia_url'] = $fotografiaUrl;
+                    $stock = (float) ($stocks[$articulo->id] ?? 0);
+                    return [
+                        'inventario_id' => (int) ($primerInventarioId[$articulo->id] ?? 0),
+                        'articulo_id' => $articulo->id,
+                        'almacen_id' => $almacenId,
+                        'stock_disponible' => $stock,
+                        'cantidad' => $stock,
+                        'articulo' => $articuloArray,
+                        'almacen' => $almacenArray,
+                    ];
+                })->values()->all();
+
+                $response = response()->json([
+                    'success' => true,
+                    'data' => [
+                        'data' => $items,
+                        'current_page' => $paginated->currentPage(),
+                        'last_page' => $paginated->lastPage(),
+                        'per_page' => $paginated->perPage(),
+                        'total' => $paginated->total(),
+                    ]
+                ]);
+                $response->header('Cache-Control', 'no-store, no-cache, must-revalidate');
+                $response->header('Pragma', 'no-cache');
+                return $response;
+            }
+
+            // Sin almacén: listar por inventario (registros articulo por almacén)
             $query = Inventario::with([
                 'articulo' => function ($q) {
                     $q->select('id', 'nombre', 'codigo', 'precio_venta', 'precio_uno', 'precio_dos', 'precio_tres', 'precio_cuatro', 'precio_costo_unid', 'precio_costo_paq', 'categoria_id', 'marca_id', 'medida_id', 'industria_id', 'proveedor_id', 'fotografia');
@@ -199,46 +284,46 @@ class VentaController extends Controller
                 'almacen:id,nombre_almacen,sucursal_id'
             ]);
 
-            // Por defecto, solo mostrar productos con stock > 0
-            // Usar comparación con decimales: > 0.0001 para incluir valores como 0.50
-            if (!$incluirSinStock) {
-                $query->where('saldo_stock', '>', 0.0001);
-            }
-
-            if ($almacenId) {
-                $query->where('almacen_id', $almacenId);
-            }
-
-            // Filtrar por sucursal si se envía (a través del almacén)
-            if ($request->has('sucursal_id')) {
+            if ($incluirSinStock) {
+                // Sin filtro por almacén
+            } elseif ($request->filled('sucursal_id')) {
                 $sucursalId = $request->sucursal_id;
                 $query->whereHas('almacen', function ($q) use ($sucursalId) {
                     $q->where('sucursal_id', $sucursalId);
                 });
             }
 
-            if ($request->has('categoria_id')) {
-                $categoriaId = $request->categoria_id;
-                $query->whereHas('articulo', function ($q) use ($categoriaId) {
-                    $q->where('categoria_id', $categoriaId);
+            // Filtrar por marca: solo inventarios cuyo artículo pertenece a esa marca
+            $marcaIdParam = $request->input('marca_id');
+            if ($marcaIdParam !== null && $marcaIdParam !== '' && (int) $marcaIdParam > 0) {
+                $marcaId = (int) $marcaIdParam;
+                $query->whereHas('articulo', function ($aq) use ($marcaId) {
+                    $aq->where('marca_id', $marcaId);
                 });
             }
 
-            // Aplicar búsqueda si existe
+            // Aplicar búsqueda si existe; SIEMPRE incluir productos sin stock (aunque no coincidan con la búsqueda)
             $searchableFields = [
                 'articulo.nombre',
                 'articulo.codigo',
                 'articulo.marca.nombre',
                 'articulo.categoria.nombre'
             ];
-            $query = $this->applySearch($query, $request, $searchableFields);
+            $searchNonEmpty = $request->filled('search') && trim((string) $request->search) !== '';
+            if ($searchNonEmpty) {
+                $query->where(function ($q) use ($request, $searchableFields) {
+                    $this->applySearch($q, $request, $searchableFields);
+                    $q->orWhere('inventarios.saldo_stock', '<=', 0);
+                });
+            } else {
+                $query = $this->applySearch($query, $request, $searchableFields);
+            }
 
-            // Aplicar ordenamiento
-            $query = $this->applySorting($query, $request, ['id', 'saldo_stock'], 'id', 'desc');
+            // Ordenar para que productos con stock 0 aparezcan primero (saldo_stock asc), luego por id
+            $query->orderBy('saldo_stock', 'asc')->orderBy('id', 'desc');
 
-        // Si se solicita paginación
+        // Si se solicita paginación (igual que cuando era por categoría)
         if ($request->has('per_page') || $request->has('page')) {
-            // Aumentar el límite máximo para catálogo (cuando se solicita incluir_sin_stock)
             $maxPerPage = $incluirSinStock ? 10000 : 100;
             $perPage = min((int) $request->get('per_page', 24), $maxPerPage);
             $paginated = $query->paginate($perPage);
@@ -281,7 +366,7 @@ class VentaController extends Controller
                 ];
             });
 
-            return response()->json([
+            $response = response()->json([
                 'success' => true,
                 'data' => [
                     'data' => $paginated->items(),
@@ -291,6 +376,10 @@ class VentaController extends Controller
                     'total' => $paginated->total(),
                 ]
             ]);
+            // Evitar caché del navegador para que siempre se vean productos con/sin stock actualizados
+            $response->header('Cache-Control', 'no-store, no-cache, must-revalidate');
+            $response->header('Pragma', 'no-cache');
+            return $response;
         }
 
         // Comportamiento anterior (sin paginación)
@@ -334,7 +423,10 @@ class VentaController extends Controller
             ];
         });
 
-        return response()->json($productos);
+        $response = response()->json($productos);
+        $response->header('Cache-Control', 'no-store, no-cache, must-revalidate');
+        $response->header('Pragma', 'no-cache');
+        return $response;
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,

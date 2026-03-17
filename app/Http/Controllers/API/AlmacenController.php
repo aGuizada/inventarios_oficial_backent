@@ -1,6 +1,6 @@
 <?php
 
-namespace App\Http\Controllers\API;
+namespace App\Http\Controllers\API; //Cambio
 
 use App\Http\Controllers\Controller;
 use App\Http\Traits\HasPagination;
