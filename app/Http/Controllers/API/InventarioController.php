@@ -49,11 +49,24 @@ class InventarioController extends Controller
         $request->validate([
             'almacen_id' => 'required|exists:almacenes,id',
             'articulo_id' => 'required|exists:articulos,id',
-            'cantidad' => 'required|integer',
+            'cantidad' => 'nullable|integer|min:0',
+            'saldo_stock' => 'nullable|numeric|min:0',
+            'saldo' => 'nullable|numeric|min:0',
             'ubicacion' => 'nullable|string|max:100',
         ]);
 
-        $inventario = Inventario::create($request->all());
+        $cantidad = (int) ($request->cantidad ?? 0);
+        $saldoStock = $request->has('saldo_stock')
+            ? (float) $request->saldo_stock
+            : ($request->has('saldo') ? (float) $request->saldo : $cantidad);
+
+        $inventario = Inventario::create([
+            'almacen_id' => $request->almacen_id,
+            'articulo_id' => $request->articulo_id,
+            'cantidad' => $cantidad,
+            'saldo_stock' => $saldoStock,
+            'fecha_vencimiento' => $request->fecha_vencimiento ?? '2099-01-01',
+        ]);
 
         return response()->json($inventario, 201);
     }
@@ -67,20 +80,37 @@ class InventarioController extends Controller
     public function update(Request $request, Inventario $inventario)
     {
         $request->validate([
-            'almacen_id' => 'required|exists:almacenes,id',
-            'articulo_id' => 'required|exists:articulos,id',
-            'cantidad' => 'required|integer',
+            'almacen_id' => 'sometimes|exists:almacenes,id',
+            'articulo_id' => 'sometimes|exists:articulos,id',
+            'cantidad' => 'nullable|integer|min:0',
+            'saldo_stock' => 'nullable|numeric|min:0',
+            'saldo' => 'nullable|numeric|min:0',
             'ubicacion' => 'nullable|string|max:100',
         ]);
 
-        // IMPORTANTE: Solo actualizar campos que se enviaron explícitamente
-        // Esto preserva los datos existentes del servidor que no se están actualizando
-        $camposPermitidos = ['almacen_id', 'articulo_id', 'cantidad', 'ubicacion'];
-        $data = $request->only($camposPermitidos);
+        // Actualizar solo los campos enviados (PATCH parcial).
+        // Stock disponible = saldo_stock (columna "Stock" en UI y usado en ventas).
+        $data = [];
+        if ($request->has('almacen_id')) {
+            $data['almacen_id'] = $request->almacen_id;
+        }
+        if ($request->has('articulo_id')) {
+            $data['articulo_id'] = $request->articulo_id;
+        }
+        if ($request->has('cantidad')) {
+            $data['cantidad'] = (int) $request->cantidad;
+        }
+        if ($request->has('saldo_stock')) {
+            $data['saldo_stock'] = (float) $request->saldo_stock;
+        } elseif ($request->has('saldo')) {
+            $data['saldo_stock'] = (float) $request->saldo;
+        }
 
-        $inventario->update($data);
+        if (!empty($data)) {
+            $inventario->update($data);
+        }
 
-        return response()->json($inventario);
+        return response()->json($inventario->fresh());
     }
 
     public function destroy(Inventario $inventario)

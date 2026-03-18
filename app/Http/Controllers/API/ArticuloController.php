@@ -287,9 +287,9 @@ class ArticuloController extends Controller
                     'max:255'
                 ],
                 'nombre' => 'required|string|max:255',
-                'unidad_envase' => 'required|integer',
-                'precio_costo_unid' => 'required|numeric',
-                'precio_costo_paq' => 'required|numeric',
+                'unidad_envase' => 'nullable|integer|min:1',
+                'precio_costo_unid' => 'nullable|numeric|min:0',
+                'precio_costo_paq' => 'nullable|numeric|min:0',
                 'precio_venta' => 'required|numeric',
                 'precio_uno' => 'nullable|numeric',
                 'precio_dos' => 'nullable|numeric',
@@ -297,13 +297,27 @@ class ArticuloController extends Controller
                 'precio_cuatro' => 'nullable|numeric',
                 'stock' => 'required|numeric|min:0',
                 'descripcion' => 'nullable|string|max:256',
-                'costo_compra' => 'required|numeric',
+                'costo_compra' => 'nullable|numeric|min:0',
                 'vencimiento' => 'nullable|integer',
                 'fotografia' => 'nullable|image|mimes:jpeg,png,jpg,gif,webp|max:10240', // 10MB máximo
                 'estado' => 'boolean',
             ]);
 
             $data = $request->all();
+
+            // Valores por defecto para campos opcionales (formulario simplificado)
+            if (!isset($data['unidad_envase']) || $data['unidad_envase'] === '' || $data['unidad_envase'] === null) {
+                $data['unidad_envase'] = 1;
+            }
+            if (!isset($data['precio_costo_unid']) || $data['precio_costo_unid'] === '' || $data['precio_costo_unid'] === null) {
+                $data['precio_costo_unid'] = 0;
+            }
+            if (!isset($data['precio_costo_paq']) || $data['precio_costo_paq'] === '' || $data['precio_costo_paq'] === null) {
+                $data['precio_costo_paq'] = 0;
+            }
+            if (!isset($data['costo_compra']) || $data['costo_compra'] === '' || $data['costo_compra'] === null) {
+                $data['costo_compra'] = 0;
+            }
 
             // Manejo de la fotografía (similar al otro sistema pero mejorado)
             if ($request->hasFile('fotografia')) {
