@@ -112,6 +112,22 @@ class VentaController extends Controller
         ];
     }
 
+    /**
+     * Calcula la cantidad en unidad base (para kardex/inventario) según unidad_medida.
+     */
+    private function cantidadEnUnidadBase(int $articuloId, float $cantidadVenta, string $unidadMedida): float
+    {
+        $articulo = Articulo::find($articuloId);
+        $cantidadDeducir = $cantidadVenta;
+        if ($unidadMedida === 'Paquete' && $articulo) {
+            $unidadEnvase = (float) ($articulo->unidad_envase ?? 1);
+            $cantidadDeducir = $cantidadVenta * ($unidadEnvase > 0 ? $unidadEnvase : 1);
+        } elseif ($unidadMedida === 'Centimetro') {
+            $cantidadDeducir = $cantidadVenta / 100;
+        }
+        return round((float) $cantidadDeducir, 3);
+    }
+
     public function index(Request $request)
     {
         try {
@@ -619,10 +635,10 @@ class VentaController extends Controller
                 }
             }
 
-            // Preparar datos de la venta con el total calculado
-            // Excluir campos que no pertenecen al modelo Venta
-            $ventaData = $request->except(['detalles', 'pagos', 'total', 'almacen_id', 'numero_cuotas', 'tiempo_dias_cuota']);
+            // Preparar datos de la venta con el total calculado (guardar almacen_id para ediciones futuras)
+            $ventaData = $request->except(['detalles', 'pagos', 'total', 'numero_cuotas', 'tiempo_dias_cuota']);
             $ventaData['total'] = $resultadoCalculo['total'];
+            $ventaData['almacen_id'] = $almacenId;
 
             $venta = Venta::create($ventaData);
 
@@ -845,6 +861,12 @@ class VentaController extends Controller
             ], 404);
         }
 
+        // Edición con cambio de productos: se envían detalles + almacen_id (mismo cuerpo que store).
+        if ($request->has('detalles') && is_array($request->detalles) && count($request->detalles) > 0) {
+            return $this->updateConDetalles($request, $venta);
+        }
+
+        // Actualización simple de cabecera (comportamiento anterior, no se toca).
         $request->validate([
             'cliente_id' => 'required|exists:clientes,id',
             'user_id' => 'required|exists:users,id',
@@ -883,6 +905,224 @@ class VentaController extends Controller
         $venta->update($request->all());
 
         return response()->json($venta);
+    }
+
+    /**
+     * Actualiza una venta cambiando productos: revierte inventario y caja de la venta anterior,
+     * aplica nuevos detalles, stock y caja. No modifica store() ni el flujo normal de ventas.
+     */
+    private function updateConDetalles(Request $request, Venta $venta)
+    {
+        $request->validate([
+            'almacen_id' => ($venta->almacen_id ? 'nullable' : 'required') . '|exists:almacenes,id',
+            'detalles' => 'required|array|min:1',
+            'detalles.*.articulo_id' => 'required|exists:articulos,id',
+            'detalles.*.cantidad' => 'required|numeric|min:0.01',
+            'detalles.*.precio' => 'required|numeric|min:0',
+            'detalles.*.descuento' => 'nullable|numeric|min:0',
+            'detalles.*.unidad_medida' => 'nullable|string|in:Unidad,Paquete,Centimetro,Metro',
+            'pagos' => 'nullable|array',
+            'pagos.*.tipo_pago_id' => 'required_with:pagos|exists:tipo_pagos,id',
+            'pagos.*.monto' => 'required_with:pagos|numeric|min:0',
+        ]);
+
+        // Usar almacén de la venta original (si existe) para revertir y descontar en el mismo almacén
+        $almacenId = (int) ($venta->almacen_id ?? $request->almacen_id);
+        if ($almacenId <= 0) {
+            $almacenId = (int) $request->almacen_id;
+        }
+        $resultadoCalculo = $this->calcularTotales($request->detalles);
+        $nuevoTotal = $resultadoCalculo['total'];
+        $detallesCalculados = $resultadoCalculo['detalles_calculados'];
+
+        DB::beginTransaction();
+        try {
+            $venta->load(['detalles.articulo', 'pagos.tipoPago']);
+            $totalAnterior = (float) $venta->total;
+
+            // 1) Revertir caja: restar total y pagos anteriores
+            if ($venta->caja_id) {
+                $caja = Caja::find($venta->caja_id);
+                if ($caja) {
+                    $caja->ventas = ($caja->ventas ?? 0) - $totalAnterior;
+                    $tipoVentaAnt = TipoVenta::find($venta->tipo_venta_id);
+                    $nombreAnt = $tipoVentaAnt ? strtolower(trim($tipoVentaAnt->nombre_tipo_ventas ?? '')) : '';
+                    if (strpos($nombreAnt, 'contado') !== false) {
+                        $caja->ventas_contado = ($caja->ventas_contado ?? 0) - $totalAnterior;
+                    } elseif (strpos($nombreAnt, 'crédito') !== false || strpos($nombreAnt, 'credito') !== false) {
+                        $caja->ventas_credito = ($caja->ventas_credito ?? 0) - $totalAnterior;
+                    }
+                    foreach ($venta->pagos as $pago) {
+                        $nombreTipoPago = $pago->tipoPago ? strtolower(trim($pago->tipoPago->nombre_tipo_pago ?? '')) : '';
+                        $monto = (float) $pago->monto;
+                        if (strpos($nombreTipoPago, 'efectivo') !== false) {
+                            $caja->pagos_efectivo = ($caja->pagos_efectivo ?? 0) - $monto;
+                        } elseif (strpos($nombreTipoPago, 'qr') !== false) {
+                            $caja->pagos_qr = ($caja->pagos_qr ?? 0) - $monto;
+                        } elseif (strpos($nombreTipoPago, 'transferencia') !== false) {
+                            $caja->pagos_transferencia = ($caja->pagos_transferencia ?? 0) - $monto;
+                        }
+                    }
+                    $caja->save();
+                }
+            }
+
+            // 2) Devolver stock de los detalles antiguos (entrada en kardex)
+            // Primero devolvemos para que la validación de los nuevos detalles vea el stock correcto
+            foreach ($venta->detalles as $det) {
+                $unidadMedida = $det->unidad_medida ?? 'Unidad';
+                $cantidadEntrada = $this->cantidadEnUnidadBase((int) $det->articulo_id, (float) $det->cantidad, $unidadMedida);
+                $articulo = Articulo::find($det->articulo_id);
+                $this->kardexService->registrarMovimiento([
+                    'articulo_id' => $det->articulo_id,
+                    'almacen_id' => $almacenId,
+                    'fecha' => $venta->fecha_hora,
+                    'tipo_movimiento' => 'Devolucion_edicion_de_venta',
+                    'documento_tipo' => $venta->tipo_comprobante ?? 'ticket',
+                    'documento_numero' => $venta->num_comprobante ?? 'S/N',
+                    'cantidad_entrada' => $cantidadEntrada,
+                    'cantidad_salida' => 0,
+                    'costo_unitario' => $articulo->precio_costo ?? 0,
+                    'precio_unitario' => $det->precio,
+                    'observaciones' => 'Devolución por edición venta #' . $venta->id,
+                    'usuario_id' => $venta->user_id,
+                    'venta_id' => $venta->id
+                ]);
+            }
+
+            // 2b) Validar stock de los nuevos detalles (ya con el stock revertido)
+            foreach ($request->detalles as $index => $detalle) {
+                $articuloId = (int) $detalle['articulo_id'];
+                $cantidadVenta = (float) $detalle['cantidad'];
+                $unidadMedida = $detalle['unidad_medida'] ?? 'Unidad';
+                $cantidadDeducir = $this->cantidadEnUnidadBase($articuloId, $cantidadVenta, $unidadMedida);
+                $stockResult = DB::selectOne(
+                    "SELECT CAST(SUM(saldo_stock) AS DECIMAL(11,3)) as stock_total FROM inventarios WHERE articulo_id = ? AND almacen_id = ?",
+                    [$articuloId, $almacenId]
+                );
+                $stockDisponible = round((float) ($stockResult->stock_total ?? 0), 3);
+                if (($stockDisponible - $cantidadDeducir) < -0.0001) {
+                    DB::rollBack();
+                    return response()->json([
+                        'message' => 'Error de validación',
+                        'errors' => ["detalles.{$index}.cantidad" => ["Stock insuficiente. Disponible: {$stockDisponible}."]]
+                    ], 422);
+                }
+            }
+
+            // 3) Borrar detalles y pagos antiguos
+            DetalleVenta::where('venta_id', $venta->id)->delete();
+            \App\Models\DetallePago::where('venta_id', $venta->id)->delete();
+
+            // 4) Actualizar cabecera de la venta
+            $venta->update([
+                'cliente_id' => $request->cliente_id,
+                'tipo_venta_id' => $request->tipo_venta_id,
+                'tipo_pago_id' => $request->tipo_pago_id ?? $venta->tipo_pago_id,
+                'tipo_comprobante' => $request->tipo_comprobante ?? $venta->tipo_comprobante,
+                'serie_comprobante' => $request->serie_comprobante ?? $venta->serie_comprobante,
+                'num_comprobante' => $request->num_comprobante ?? $venta->num_comprobante,
+                'fecha_hora' => $request->fecha_hora ?? $venta->fecha_hora,
+                'total' => $nuevoTotal
+            ]);
+
+            $credito = \App\Models\CreditoVenta::where('venta_id', $venta->id)->first();
+            if ($credito) {
+                $credito->update(['total' => $nuevoTotal]);
+            }
+
+            // 5) Crear nuevos detalles y descontar stock
+            foreach ($detallesCalculados as $detalle) {
+                DetalleVenta::create([
+                    'venta_id' => $venta->id,
+                    'articulo_id' => $detalle['articulo_id'],
+                    'cantidad' => $detalle['cantidad'],
+                    'precio' => $detalle['precio'],
+                    'descuento' => $detalle['descuento'],
+                    'unidad_medida' => $detalle['unidad_medida']
+                ]);
+                $articuloId = (int) $detalle['articulo_id'];
+                $cantidadVenta = (float) $detalle['cantidad'];
+                $unidadMedida = $detalle['unidad_medida'] ?? 'Unidad';
+                $cantidadSalidaFinal = $this->cantidadEnUnidadBase($articuloId, $cantidadVenta, $unidadMedida);
+                $articulo = Articulo::find($articuloId);
+                $this->kardexService->registrarMovimiento([
+                    'articulo_id' => $articuloId,
+                    'almacen_id' => $almacenId,
+                    'fecha' => $request->fecha_hora ?? $venta->fecha_hora,
+                    'tipo_movimiento' => 'venta',
+                    'documento_tipo' => $request->tipo_comprobante ?? 'ticket',
+                    'documento_numero' => $request->num_comprobante ?? $venta->num_comprobante ?? 'S/N',
+                    'cantidad_entrada' => 0,
+                    'cantidad_salida' => $cantidadSalidaFinal,
+                    'costo_unitario' => $articulo->precio_costo ?? 0,
+                    'precio_unitario' => $detalle['precio'],
+                    'observaciones' => 'Venta (edición) ' . ($request->tipo_comprobante ?? 'ticket') . ' ' . ($request->num_comprobante ?? ''),
+                    'usuario_id' => $request->user_id ?? $venta->user_id,
+                    'venta_id' => $venta->id
+                ]);
+            }
+
+            // 6) Crear nuevos pagos
+            if ($request->has('pagos') && is_array($request->pagos) && count($request->pagos) > 0) {
+                foreach ($request->pagos as $pago) {
+                    \App\Models\DetallePago::create([
+                        'venta_id' => $venta->id,
+                        'tipo_pago_id' => $pago['tipo_pago_id'],
+                        'monto' => $pago['monto'],
+                        'referencia' => $pago['referencia'] ?? null
+                    ]);
+                }
+            } else {
+                \App\Models\DetallePago::create([
+                    'venta_id' => $venta->id,
+                    'tipo_pago_id' => $request->tipo_pago_id ?? $venta->tipo_pago_id,
+                    'monto' => $nuevoTotal,
+                    'referencia' => null
+                ]);
+            }
+
+            // 7) Aplicar nuevo total y pagos a la caja
+            if ($venta->caja_id) {
+                $caja = Caja::find($venta->caja_id);
+                if ($caja) {
+                    $caja->ventas = ($caja->ventas ?? 0) + $nuevoTotal;
+                    $tipoVenta = TipoVenta::find($venta->tipo_venta_id);
+                    $nombreTipoVenta = $tipoVenta ? strtolower(trim($tipoVenta->nombre_tipo_ventas ?? '')) : '';
+                    if (strpos($nombreTipoVenta, 'contado') !== false) {
+                        $caja->ventas_contado = ($caja->ventas_contado ?? 0) + $nuevoTotal;
+                    } elseif (strpos($nombreTipoVenta, 'crédito') !== false || strpos($nombreTipoVenta, 'credito') !== false) {
+                        $caja->ventas_credito = ($caja->ventas_credito ?? 0) + $nuevoTotal;
+                    }
+                    $pagos = \App\Models\DetallePago::where('venta_id', $venta->id)->with('tipoPago')->get();
+                    foreach ($pagos as $pago) {
+                        $nombreTipoPago = $pago->tipoPago ? strtolower(trim($pago->tipoPago->nombre_tipo_pago ?? '')) : '';
+                        $montoPago = (float) $pago->monto;
+                        if (strpos($nombreTipoPago, 'efectivo') !== false) {
+                            $caja->pagos_efectivo = ($caja->pagos_efectivo ?? 0) + $montoPago;
+                        } elseif (strpos($nombreTipoPago, 'qr') !== false) {
+                            $caja->pagos_qr = ($caja->pagos_qr ?? 0) + $montoPago;
+                        } elseif (strpos($nombreTipoPago, 'transferencia') !== false) {
+                            $caja->pagos_transferencia = ($caja->pagos_transferencia ?? 0) + $montoPago;
+                        }
+                    }
+                    $caja->save();
+                }
+            }
+
+            DB::commit();
+            Cache::forget('dashboard.kpis');
+            Cache::forget('dashboard.ventas_recientes');
+            $venta->load(['cliente', 'user', 'tipoVenta', 'tipoPago', 'caja', 'detalles.articulo.medida', 'detalles.articulo.marca', 'pagos.tipoPago']);
+            return response()->json($venta);
+        } catch (\Exception $e) {
+            DB::rollBack();
+            \Log::error('Error al actualizar venta con detalles', ['message' => $e->getMessage(), 'trace' => $e->getTraceAsString()]);
+            return response()->json([
+                'message' => 'Error al actualizar la venta',
+                'error' => $e->getMessage()
+            ], 500);
+        }
     }
 
     public function destroy($id)

@@ -18,6 +18,7 @@ class DetalleVenta extends Model
         'cantidad',
         'precio',
         'descuento',
+        'unidad_medida',
     ];
 
     public function venta()

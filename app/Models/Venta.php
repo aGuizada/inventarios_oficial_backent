@@ -13,7 +13,7 @@ class Venta extends Model
 
     protected $fillable = [
         'cliente_id',
-        'user_id', // Changed from usuario_id
+        'user_id',
         'tipo_venta_id',
         'tipo_pago_id',
         'tipo_comprobante',
@@ -23,6 +23,7 @@ class Venta extends Model
         'total',
         'estado',
         'caja_id',
+        'almacen_id',
     ];
 
     public function cliente()
