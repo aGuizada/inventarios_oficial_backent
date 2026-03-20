@@ -4,7 +4,11 @@
     "type": "module",
     "scripts": {
         "build": "vite build",
-        "dev": "vite"
+        "dev": "vite",
+        "lint:sql": "sqlfluff lint database/sql",
+        "fix:sql": "sqlfluff fix database/sql",
+        "lint:sql:py": "py -m sqlfluff lint database/sql",
+        "fix:sql:py": "py -m sqlfluff fix database/sql"
     },
     "devDependencies": {
         "@tailwindcss/vite": "^4.0.0",

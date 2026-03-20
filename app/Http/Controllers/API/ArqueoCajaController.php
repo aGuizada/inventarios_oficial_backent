@@ -11,6 +11,7 @@ class ArqueoCajaController extends Controller
     public function index()
     {
         $arqueos = ArqueoCaja::with(['caja', 'user'])->get();
+
         return response()->json(['data' => $arqueos]);
     }
 
@@ -18,7 +19,6 @@ class ArqueoCajaController extends Controller
     {
         $request->validate([
             'caja_id' => 'required|exists:cajas,id',
-            'user_id' => 'required|exists:users,id',
             'billete200' => 'nullable|integer',
             'billete100' => 'nullable|integer',
             'billete50' => 'nullable|integer',
@@ -33,7 +33,9 @@ class ArqueoCajaController extends Controller
             'total_efectivo' => 'required|numeric',
         ]);
 
-        $arqueo = ArqueoCaja::create($request->all());
+        $data = $request->except(['user_id']);
+        $data['user_id'] = $request->user()->id;
+        $arqueo = ArqueoCaja::create($data);
 
         return response()->json($arqueo, 201);
     }
@@ -41,6 +43,7 @@ class ArqueoCajaController extends Controller
     public function show(ArqueoCaja $arqueoCaja)
     {
         $arqueoCaja->load(['caja', 'user']);
+
         return response()->json($arqueoCaja);
     }
 
@@ -48,7 +51,6 @@ class ArqueoCajaController extends Controller
     {
         $request->validate([
             'caja_id' => 'required|exists:cajas,id',
-            'user_id' => 'required|exists:users,id',
             'billete200' => 'nullable|integer',
             'billete100' => 'nullable|integer',
             'billete50' => 'nullable|integer',
@@ -63,7 +65,7 @@ class ArqueoCajaController extends Controller
             'total_efectivo' => 'required|numeric',
         ]);
 
-        $arqueoCaja->update($request->all());
+        $arqueoCaja->update($request->except(['user_id']));
 
         return response()->json($arqueoCaja);
     }
@@ -71,6 +73,7 @@ class ArqueoCajaController extends Controller
     public function destroy(ArqueoCaja $arqueoCaja)
     {
         $arqueoCaja->delete();
+
         return response()->json(null, 204);
     }
 }

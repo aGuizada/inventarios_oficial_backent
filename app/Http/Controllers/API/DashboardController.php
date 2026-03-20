@@ -33,14 +33,14 @@ class DashboardController extends Controller
             $mesActual = Carbon::now()->startOfMonth();
             $mesAnterior = Carbon::now()->subMonth()->startOfMonth();
 
-            // === VENTAS ===
-            $ventasHoy = Venta::whereDate('fecha_hora', $hoy)->sum('total');
-            $ventasMes = Venta::where('fecha_hora', '>=', $mesActual)->sum('total');
+            // === VENTAS === (no incluir anuladas/canceladas en montos)
+            $ventasHoy = Venta::whereDate('fecha_hora', $hoy)->whereNotIn('estado', ['Anulado', 'Cancelada'])->sum('total');
+            $ventasMes = Venta::where('fecha_hora', '>=', $mesActual)->whereNotIn('estado', ['Anulado', 'Cancelada'])->sum('total');
             $ventasMesAnterior = Venta::whereBetween('fecha_hora', [
                 $mesAnterior,
-                $mesAnterior->copy()->endOfMonth()
-            ])->sum('total');
-            $totalVentas = Venta::sum('total');
+                $mesAnterior->copy()->endOfMonth(),
+            ])->whereNotIn('estado', ['Anulado', 'Cancelada'])->sum('total');
+            $totalVentas = Venta::whereNotIn('estado', ['Anulado', 'Cancelada'])->sum('total');
 
             // === INVENTARIO ===
             $productosBajoStock = Inventario::where('saldo_stock', '<', 10)->count();
@@ -157,7 +157,7 @@ class DashboardController extends Controller
                 $fecha = Carbon::today()->subDays($i);
                 $labels[] = $fecha->format('d/m');
 
-                $totalDia = Venta::whereDate('fecha_hora', $fecha)->sum('total');
+                $totalDia = Venta::whereDate('fecha_hora', $fecha)->whereNotIn('estado', ['Anulado', 'Cancelada'])->sum('total');
                 $data[] = $totalDia;
             }
 

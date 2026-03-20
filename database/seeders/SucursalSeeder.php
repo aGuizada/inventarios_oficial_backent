@@ -12,8 +12,13 @@ class SucursalSeeder extends Seeder
      */
     public function run(): void
     {
+        $empresaId = DB::table('empresas')->orderBy('id')->value('id');
+        if (! $empresaId) {
+            throw new \RuntimeException('Ejecute EmpresaSeeder antes de SucursalSeeder.');
+        }
+
         DB::table('sucursales')->insert([
-            'empresa_id' => 1, // Asume que la empresa con ID 1 ya existe
+            'empresa_id' => $empresaId,
             'nombre' => 'AUTOZONE',
             'codigoSucursal' => 1,
             'direccion' => 'Av. Principal #123',
@@ -23,7 +28,7 @@ class SucursalSeeder extends Seeder
             'estado' => 1,
             'responsable' => 'Administrador',
             'created_at' => now(),
-            'updated_at' => now()
+            'updated_at' => now(),
         ]);
     }
 }

@@ -54,6 +54,21 @@ class User extends Authenticatable
         return $this->belongsTo(Rol::class);
     }
 
+    /**
+     * Administrador por nombre de rol (no asumir rol_id === 1: p. ej. tests con AUTO_INCREMENT tras rollback).
+     */
+    public function isAdministrador(): bool
+    {
+        if ($this->rol_id === null) {
+            return false;
+        }
+
+        return Rol::query()
+            ->where('id', $this->rol_id)
+            ->where('nombre', 'Administrador')
+            ->exists();
+    }
+
     public function sucursal()
     {
         return $this->belongsTo(Sucursal::class);

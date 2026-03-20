@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 
@@ -64,5 +65,27 @@ class Venta extends Model
     public function pagos()
     {
         return $this->hasMany(DetallePago::class);
+    }
+
+    public function devoluciones()
+    {
+        return $this->hasMany(DevolucionVenta::class, 'venta_id');
+    }
+
+    public function almacen()
+    {
+        return $this->belongsTo(Almacen::class);
+    }
+
+    /**
+     * Alcance de listado: vendedores solo ven sus ventas; administradores ven todas.
+     */
+    public function scopeForAuthenticatedList(Builder $query, ?User $user): Builder
+    {
+        if ($user && ! $user->isAdministrador()) {
+            $query->where('user_id', $user->id);
+        }
+
+        return $query;
     }
 }

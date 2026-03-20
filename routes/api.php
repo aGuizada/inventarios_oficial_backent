@@ -1,12 +1,9 @@
 <?php
 
-use Illuminate\Http\Request;
-use Illuminate\Support\Facades\Route;
-use App\Http\Controllers\API\AuthController;
-use App\Http\Controllers\API\UserController;
 use App\Http\Controllers\API\AlmacenController;
 use App\Http\Controllers\API\ArqueoCajaController;
 use App\Http\Controllers\API\ArticuloController;
+use App\Http\Controllers\API\AuthController;
 use App\Http\Controllers\API\CajaController;
 use App\Http\Controllers\API\CategoriaController;
 use App\Http\Controllers\API\ClienteController;
@@ -17,6 +14,7 @@ use App\Http\Controllers\API\ConteoFisicoController;
 use App\Http\Controllers\API\CotizacionController;
 use App\Http\Controllers\API\CreditoVentaController;
 use App\Http\Controllers\API\CuotaCreditoController;
+use App\Http\Controllers\API\DashboardController;
 use App\Http\Controllers\API\DevolucionController;
 use App\Http\Controllers\API\EmpresaController;
 use App\Http\Controllers\API\IndustriaController;
@@ -35,9 +33,9 @@ use App\Http\Controllers\API\TipoPagoController;
 use App\Http\Controllers\API\TipoVentaController;
 use App\Http\Controllers\API\TransaccionCajaController;
 use App\Http\Controllers\API\TraspasoController;
+use App\Http\Controllers\API\UserController;
 use App\Http\Controllers\API\VentaController;
-use App\Http\Controllers\API\DashboardController;
-
+use Illuminate\Support\Facades\Route;
 
 /*
 |--------------------------------------------------------------------------
@@ -217,7 +215,7 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::apiResource('monedas', MonedaController::class);
 
     // Notificaciones
-// Notificaciones
+    // Notificaciones
     Route::get('notificaciones/no-leidas', [NotificationController::class, 'unread']);
     Route::put('notificaciones/leer-todas', [NotificationController::class, 'markAllAsRead']);
     Route::put('notificaciones/{id}/leer', [NotificationController::class, 'markAsRead']);
@@ -262,6 +260,7 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('ventas/{id}/imprimir/{formato}', [VentaController::class, 'imprimirComprobante']);
     Route::get('ventas/reporte/detallado-pdf', [VentaController::class, 'exportReporteDetalladoPDF']);
     Route::get('ventas/reporte/general-pdf', [VentaController::class, 'exportReporteGeneralPDF']);
+    Route::post('ventas/{id}/anular', [VentaController::class, 'anular']);
     Route::apiResource('ventas', VentaController::class);
     // Dashboard
     Route::prefix('dashboard')->group(function () {
@@ -292,6 +291,6 @@ Route::get('/health', function () {
     return response()->json([
         'status' => 'ok',
         'message' => 'API funcionando correctamente',
-        'timestamp' => now()->toDateTimeString()
+        'timestamp' => now()->toDateTimeString(),
     ]);
 });

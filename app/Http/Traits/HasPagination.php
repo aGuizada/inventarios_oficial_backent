@@ -2,8 +2,8 @@
 
 namespace App\Http\Traits;
 
-use Illuminate\Http\Request;
 use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Http\Request;
 
 trait HasPagination
 {
@@ -12,7 +12,7 @@ trait HasPagination
      */
     protected function applySearch(Builder $query, Request $request, array $searchableFields): Builder
     {
-        if (!$request->has('search') || !$request->search) {
+        if (! $request->has('search') || ! $request->search) {
             return $query;
         }
 
@@ -25,7 +25,7 @@ trait HasPagination
         $searchNormalized = mb_strtolower($search, 'UTF-8');
         $searchEscaped = addcslashes($search, '%_');
 
-        return $query->where(function ($q) use ($search, $searchNormalized, $searchEscaped, $searchableFields) {
+        return $query->where(function ($q) use ($search, $searchEscaped, $searchableFields) {
             foreach ($searchableFields as $field) {
                 try {
                     if (strpos($field, '.') !== false) {
@@ -44,7 +44,7 @@ trait HasPagination
                         } else {
                             // Búsqueda case-insensitive en relaciones
                             $q->orWhereHas($relationPath, function ($subQ) use ($searchEscaped, $relationField) {
-                                $subQ->whereRaw("LOWER({$relationField}) LIKE ?", ["%" . mb_strtolower($searchEscaped, 'UTF-8') . "%"]);
+                                $subQ->whereRaw("LOWER({$relationField}) LIKE ?", ['%'.mb_strtolower($searchEscaped, 'UTF-8').'%']);
                             });
                         }
                     } else {
@@ -57,18 +57,19 @@ trait HasPagination
                             if ($field === 'codigo') {
                                 // Buscar por código (puede ser NULL), búsqueda case-insensitive
                                 $q->orWhere(function ($subQ) use ($searchEscaped, $field) {
-                                    $subQ->whereRaw("LOWER(CAST({$field} AS CHAR)) LIKE ?", ["%" . mb_strtolower($searchEscaped, 'UTF-8') . "%"])
-                                        ->orWhereRaw("LOWER({$field}) LIKE ?", ["%" . mb_strtolower($searchEscaped, 'UTF-8') . "%"]);
+                                    $subQ->whereRaw("LOWER(CAST({$field} AS CHAR)) LIKE ?", ['%'.mb_strtolower($searchEscaped, 'UTF-8').'%'])
+                                        ->orWhereRaw("LOWER({$field}) LIKE ?", ['%'.mb_strtolower($searchEscaped, 'UTF-8').'%']);
                                 });
                             } else {
                                 // Búsqueda case-insensitive para otros campos de texto
-                                $q->orWhereRaw("LOWER({$field}) LIKE ?", ["%" . mb_strtolower($searchEscaped, 'UTF-8') . "%"]);
+                                $q->orWhereRaw("LOWER({$field}) LIKE ?", ['%'.mb_strtolower($searchEscaped, 'UTF-8').'%']);
                             }
                         }
                     }
-                } catch (\Exception $e) {
+                } catch (\Throwable $e) {
                     // Si hay un error con una relación, simplemente la omitimos
-                    \Log::warning("Error al buscar en campo {$field}: " . $e->getMessage());
+                    \Log::warning("Error al buscar en campo {$field}: ".$e->getMessage());
+
                     continue;
                 }
             }
@@ -84,12 +85,12 @@ trait HasPagination
         $sortOrder = $request->get('sort_order', $defaultOrder);
 
         // Validar campos ordenables si se proporcionan
-        if (!empty($sortableFields) && !in_array($sortBy, $sortableFields)) {
+        if (! empty($sortableFields) && ! in_array($sortBy, $sortableFields)) {
             $sortBy = $defaultSort;
         }
 
         // Validar orden
-        if (!in_array(strtolower($sortOrder), ['asc', 'desc'])) {
+        if (! in_array(strtolower($sortOrder), ['asc', 'desc'])) {
             $sortOrder = $defaultOrder;
         }
 
@@ -118,23 +119,23 @@ trait HasPagination
                         'total' => $paginated->total(),
                         'from' => $paginated->firstItem(),
                         'to' => $paginated->lastItem(),
-                    ]
+                    ],
                 ]);
             }
 
             // Sin paginación (compatibilidad)
             $items = $query->get();
+
             return response()->json(['data' => $items]);
-        } catch (\Exception $e) {
+        } catch (\Throwable $e) {
             \Log::error('Error en paginateResponse', [
                 'message' => $e->getMessage(),
                 'file' => $e->getFile(),
                 'line' => $e->getLine(),
-                'trace' => $e->getTraceAsString()
+                'trace' => $e->getTraceAsString(),
             ]);
 
             throw $e; // Re-lanzar para que el controlador lo maneje
         }
     }
 }
-

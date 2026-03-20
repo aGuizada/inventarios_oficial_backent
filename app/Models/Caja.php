@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 
@@ -65,38 +66,52 @@ class Caja extends Model
      */
     public function calcularSaldoDisponible()
     {
-        // Obtener ventas reales de la caja
-        $ventas = Venta::where('caja_id', $this->id)->sum('total');
-        
+        // Solo ventas que siguen contando para efectivo (excluir anuladas/canceladas)
+        $ventas = Venta::where('caja_id', $this->id)
+            ->whereNotIn('estado', ['Anulado', 'Cancelada'])
+            ->sum('total');
+
         // Obtener compras reales de la caja
         $comprasContado = CompraBase::where('caja_id', $this->id)
-            ->where(function($q) {
+            ->where(function ($q) {
                 $q->where('tipo_compra', 'CONTADO')
-                  ->orWhere('tipo_compra', 'contado');
+                    ->orWhere('tipo_compra', 'contado');
             })
             ->sum('total');
-        
+
         $comprasCredito = CompraBase::where('caja_id', $this->id)
-            ->where(function($q) {
+            ->where(function ($q) {
                 $q->where('tipo_compra', 'CREDITO')
-                  ->orWhere('tipo_compra', 'credito')
-                  ->orWhere('tipo_compra', 'CRÉDITO');
+                    ->orWhere('tipo_compra', 'credito')
+                    ->orWhere('tipo_compra', 'CRÉDITO');
             })
             ->sum('total');
-        
+
         // Obtener transacciones reales de la caja
         $transacciones = TransaccionCaja::where('caja_id', $this->id)->get();
         $entradas = $transacciones->where('transaccion', 'ingreso')->sum('importe');
         $salidas = $transacciones->where('transaccion', 'egreso')->sum('importe');
-        
+
         // Calcular saldo disponible basándose en valores reales
         $saldoInicial = (float) ($this->saldo_inicial ?? 0);
         $saldoFaltante = (float) ($this->saldo_faltante ?? 0);
-        
-        $saldoDisponible = $saldoInicial + $ventas + $entradas - 
+
+        $saldoDisponible = $saldoInicial + $ventas + $entradas -
                           $comprasContado - $comprasCredito - $salidas - $saldoFaltante;
-        
+
         // Asegurar que el saldo no sea negativo
         return max(0, round($saldoDisponible, 2));
+    }
+
+    /**
+     * Listado: responsable de caja (user_id) o administrador ven todas.
+     */
+    public function scopeForAuthenticatedList(Builder $query, ?User $user): Builder
+    {
+        if ($user && ! $user->isAdministrador()) {
+            $query->where('user_id', $user->id);
+        }
+
+        return $query;
     }
 }

@@ -2,27 +2,28 @@
 
 namespace App\Http\Controllers\API;
 
+use App\Helpers\NotificationHelper;
 use App\Http\Controllers\Controller;
+use App\Http\Requests\Venta\StoreVentaRequest;
 use App\Http\Traits\HasPagination;
-use App\Models\Venta;
+use App\Models\Almacen;
+use App\Models\Articulo;
+use App\Models\Caja;
 use App\Models\DetalleVenta;
 use App\Models\Inventario;
-use App\Models\Articulo;
-use App\Models\Almacen;
-use App\Models\Caja;
-use App\Models\TipoVenta;
-use App\Models\TipoPago;
 use App\Models\Kardex; // Added Kardex use statement
-use Illuminate\Http\Request;
-use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Facades\Cache;
-use Illuminate\Support\Facades\Storage;
-use Illuminate\Validation\ValidationException;
+use App\Models\TipoVenta;
+use App\Models\Venta;
+use App\Notifications\CreditSaleNotification;
 use App\Notifications\LowStockNotification;
 use App\Notifications\OutOfStockNotification;
-use App\Notifications\CreditSaleNotification;
-use App\Helpers\NotificationHelper;
+use App\Support\ApiError;
+use App\Support\VentaCantidadConverter;
+use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Storage;
 
 class VentaController extends Controller
 {
@@ -30,8 +31,10 @@ class VentaController extends Controller
 
     protected $kardexService;
 
-    public function __construct(\App\Services\KardexService $kardexService)
-    {
+    public function __construct(
+        \App\Services\KardexService $kardexService,
+        private readonly \App\Services\Venta\AnularVentaService $anularVentaService
+    ) {
         $this->kardexService = $kardexService;
     }
 
@@ -48,7 +51,7 @@ class VentaController extends Controller
             if (substr($baseUrl, -4) === '/api') {
                 $baseUrl = rtrim(substr($baseUrl, 0, -4), '/');
             }
-            
+
             // Si ya tiene ruta completa (compatibilidad con datos antiguos)
             if (strpos($articulo->fotografia, '/') !== false) {
                 // Extraer solo el nombre del archivo
@@ -57,22 +60,23 @@ class VentaController extends Controller
                 // Solo nombre de archivo (nueva lógica)
                 $filename = $articulo->fotografia;
             }
-            
+
             // Codificar el nombre del archivo para la URL (maneja espacios y caracteres especiales)
             $filenameEncoded = rawurlencode($filename);
-            
+
             // Usar endpoint de API para servir la imagen directamente desde storage
-            $articulo->fotografia_url = $baseUrl . '/api/articulos/imagen/' . $filenameEncoded;
+            $articulo->fotografia_url = $baseUrl.'/api/articulos/imagen/'.$filenameEncoded;
         } else {
             $articulo->fotografia_url = null;
         }
+
         return $articulo;
     }
 
     /**
      * Calcula los totales de una venta basándose en los detalles
-     * 
-     * @param array $detalles Array de detalles de venta
+     *
+     * @param  array  $detalles  Array de detalles de venta
      * @return array ['subtotal' => float, 'total' => float, 'detalles_calculados' => array]
      */
     private function calcularTotales($detalles)
@@ -98,7 +102,7 @@ class VentaController extends Controller
                 'precio' => $precio,
                 'descuento' => $descuento,
                 'unidad_medida' => $detalle['unidad_medida'] ?? 'Unidad',
-                'subtotal' => $subtotalDetalle
+                'subtotal' => $subtotalDetalle,
             ];
         }
 
@@ -108,30 +112,17 @@ class VentaController extends Controller
         return [
             'subtotal' => round($subtotal, 2),
             'total' => round($total, 2),
-            'detalles_calculados' => $detallesCalculados
+            'detalles_calculados' => $detallesCalculados,
         ];
-    }
-
-    /**
-     * Calcula la cantidad en unidad base (para kardex/inventario) según unidad_medida.
-     */
-    private function cantidadEnUnidadBase(int $articuloId, float $cantidadVenta, string $unidadMedida): float
-    {
-        $articulo = Articulo::find($articuloId);
-        $cantidadDeducir = $cantidadVenta;
-        if ($unidadMedida === 'Paquete' && $articulo) {
-            $unidadEnvase = (float) ($articulo->unidad_envase ?? 1);
-            $cantidadDeducir = $cantidadVenta * ($unidadEnvase > 0 ? $unidadEnvase : 1);
-        } elseif ($unidadMedida === 'Centimetro') {
-            $cantidadDeducir = $cantidadVenta / 100;
-        }
-        return round((float) $cantidadDeducir, 3);
     }
 
     public function index(Request $request)
     {
         try {
-            $query = Venta::with(['cliente', 'user', 'tipoVenta', 'tipoPago', 'caja', 'pagos.tipoPago']);
+            $user = $request->user();
+            $this->authorize('viewAny', Venta::class);
+            $query = Venta::with(['cliente', 'user', 'tipoVenta', 'tipoPago', 'caja', 'pagos.tipoPago'])
+                ->forAuthenticatedList($user);
 
             $searchableFields = [
                 'id',
@@ -140,18 +131,18 @@ class VentaController extends Controller
                 'tipo_comprobante',
                 'cliente.nombre',
                 'cliente.num_documento',
-                'user.name'
+                'user.name',
             ];
 
-            // Restringir visibilidad para no administradores (Vendedores)
-            $user = $request->user();
-            // Asumiendo que el rol 1 es Administrador. Si no es admin, solo ve sus ventas.
-            if ($user && $user->rol_id !== 1) {
-                $query->where('user_id', $user->id);
-            }
-
-            if ($request->has('estado')) {
-                $query->where('estado', $request->estado);
+            if ($request->has('estado') && $request->estado !== '' && $request->estado !== null) {
+                $estadoFiltro = $request->estado;
+                // Compatibilidad con clientes que envían 1/0 (histórico)
+                if ($estadoFiltro === '1' || $estadoFiltro === 1 || $estadoFiltro === true) {
+                    $estadoFiltro = 'Activo';
+                } elseif ($estadoFiltro === '0' || $estadoFiltro === 0 || $estadoFiltro === false) {
+                    $estadoFiltro = 'Anulado';
+                }
+                $query->where('estado', $estadoFiltro);
             }
 
             if ($request->has('sucursal_id')) {
@@ -169,19 +160,15 @@ class VentaController extends Controller
             $query = $this->applySorting($query, $request, ['id', 'fecha_hora', 'total', 'num_comprobante'], 'id', 'desc');
 
             return $this->paginateResponse($query, $request, 15, 100);
-        } catch (\Exception $e) {
+        } catch (\Throwable $e) {
             \Log::error('Error en VentaController@index', [
                 'message' => $e->getMessage(),
                 'file' => $e->getFile(),
                 'line' => $e->getLine(),
-                'trace' => $e->getTraceAsString()
+                'trace' => $e->getTraceAsString(),
             ]);
 
-            return response()->json([
-                'success' => false,
-                'message' => 'Error al cargar las ventas',
-                'error' => $e->getMessage()
-            ], 500);
+            return ApiError::serverError($e, 'Error al cargar las ventas', 'VentaController@index');
         }
     }
 
@@ -192,13 +179,14 @@ class VentaController extends Controller
     public function productosInventario(Request $request)
     {
         try {
+            $this->authorize('viewAny', Venta::class);
             // Obtener la URL base y asegurarse de que no termine en /api
             $baseUrl = rtrim(config('app.url'), '/');
             // Si termina en /api, removerlo para evitar duplicación
             if (substr($baseUrl, -4) === '/api') {
                 $baseUrl = rtrim(substr($baseUrl, 0, -4), '/');
             }
-            
+
             // Asegurar tipo entero para almacen_id (puede venir como string en query)
             $almacenId = $request->has('almacen_id') ? (int) $request->get('almacen_id') : null;
             // Asegurar que incluir_sin_stock se interprete bien (query string "true" -> true)
@@ -225,7 +213,7 @@ class VentaController extends Controller
                 $articulosQuery = $this->applySearch($articulosQuery, $request, $searchableFields);
 
                 // Ordenar por stock en este almacén: primero los que tienen stock, después los sin stock
-                $articulosQuery->leftJoin(DB::raw('(SELECT articulo_id, CAST(COALESCE(SUM(saldo_stock), 0) AS DECIMAL(11,3)) as total FROM inventarios WHERE almacen_id = ' . (int) $almacenId . ' GROUP BY articulo_id) as stock_almacen'), 'articulos.id', '=', 'stock_almacen.articulo_id')
+                $articulosQuery->leftJoin(DB::raw('(SELECT articulo_id, CAST(COALESCE(SUM(saldo_stock), 0) AS DECIMAL(11,3)) as total FROM inventarios WHERE almacen_id = '.(int) $almacenId.' GROUP BY articulo_id) as stock_almacen'), 'articulos.id', '=', 'stock_almacen.articulo_id')
                     ->orderByRaw('COALESCE(stock_almacen.total, 0) DESC')
                     ->orderBy('articulos.id', 'desc')
                     ->select('articulos.*');
@@ -254,13 +242,14 @@ class VentaController extends Controller
                 $items = $paginated->getCollection()->map(function ($articulo) use ($baseUrl, $almacenId, $stocks, $primerInventarioId, $almacenArray) {
                     $this->addImageUrl($articulo);
                     $fotografiaUrl = $articulo->fotografia_url ?? null;
-                    if (!$fotografiaUrl && $articulo->fotografia) {
+                    if (! $fotografiaUrl && $articulo->fotografia) {
                         $filename = strpos($articulo->fotografia, '/') !== false ? basename($articulo->fotografia) : $articulo->fotografia;
-                        $fotografiaUrl = $baseUrl . '/api/articulos/imagen/' . rawurlencode($filename);
+                        $fotografiaUrl = $baseUrl.'/api/articulos/imagen/'.rawurlencode($filename);
                     }
                     $articuloArray = $articulo->toArray();
                     $articuloArray['fotografia_url'] = $fotografiaUrl;
                     $stock = (float) ($stocks[$articulo->id] ?? 0);
+
                     return [
                         'inventario_id' => (int) ($primerInventarioId[$articulo->id] ?? 0),
                         'articulo_id' => $articulo->id,
@@ -280,10 +269,11 @@ class VentaController extends Controller
                         'last_page' => $paginated->lastPage(),
                         'per_page' => $paginated->perPage(),
                         'total' => $paginated->total(),
-                    ]
+                    ],
                 ]);
                 $response->header('Cache-Control', 'no-store, no-cache, must-revalidate');
                 $response->header('Pragma', 'no-cache');
+
                 return $response;
             }
 
@@ -297,7 +287,7 @@ class VentaController extends Controller
                 'articulo.medida:id,nombre_medida',
                 'articulo.industria:id,nombre',
                 'articulo.proveedor:id,nombre',
-                'almacen:id,nombre_almacen,sucursal_id'
+                'almacen:id,nombre_almacen,sucursal_id',
             ]);
 
             if ($incluirSinStock) {
@@ -323,7 +313,7 @@ class VentaController extends Controller
                 'articulo.nombre',
                 'articulo.codigo',
                 'articulo.marca.nombre',
-                'articulo.categoria.nombre'
+                'articulo.categoria.nombre',
             ];
             $searchNonEmpty = $request->filled('search') && trim((string) $request->search) !== '';
             if ($searchNonEmpty) {
@@ -338,39 +328,97 @@ class VentaController extends Controller
             // Ordenar para que productos con stock 0 aparezcan primero (saldo_stock asc), luego por id
             $query->orderBy('saldo_stock', 'asc')->orderBy('id', 'desc');
 
-        // Si se solicita paginación (igual que cuando era por categoría)
-        if ($request->has('per_page') || $request->has('page')) {
-            $maxPerPage = $incluirSinStock ? 10000 : 100;
-            $perPage = min((int) $request->get('per_page', 24), $maxPerPage);
-            $paginated = $query->paginate($perPage);
+            // Si se solicita paginación (igual que cuando era por categoría)
+            if ($request->has('per_page') || $request->has('page')) {
+                $maxPerPage = $incluirSinStock ? 10000 : 100;
+                $perPage = min((int) $request->get('per_page', 24), $maxPerPage);
+                $paginated = $query->paginate($perPage);
 
-            $paginated->getCollection()->transform(function ($inventario) use ($baseUrl) {
+                $paginated->getCollection()->transform(function ($inventario) use ($baseUrl) {
+                    // Usar el mismo método que ArticuloController
+                    if ($inventario->articulo) {
+                        // Agregar fotografia_url al objeto
+                        $this->addImageUrl($inventario->articulo);
+
+                        // Obtener fotografia_url antes de convertir a array
+                        $fotografiaUrl = $inventario->articulo->fotografia_url ?? null;
+
+                        // Si no se generó fotografia_url, generarla manualmente
+                        if (! $fotografiaUrl && $inventario->articulo->fotografia) {
+                            $filename = $inventario->articulo->fotografia;
+                            if (strpos($filename, '/') !== false) {
+                                $filename = basename($filename);
+                            }
+                            $fotografiaUrl = $baseUrl.'/api/articulos/imagen/'.rawurlencode($filename);
+                        }
+
+                        // Convertir a array
+                        $articuloArray = $inventario->articulo->toArray();
+
+                        // Agregar fotografia_url explícitamente al array (siempre)
+                        $articuloArray['fotografia_url'] = $fotografiaUrl;
+                    } else {
+                        $articuloArray = null;
+                    }
+
+                    return [
+                        'inventario_id' => $inventario->id,
+                        'articulo_id' => $inventario->articulo_id,
+                        'almacen_id' => $inventario->almacen_id,
+                        'stock_disponible' => (float) ($inventario->saldo_stock ?? 0),
+                        'cantidad' => (float) ($inventario->cantidad ?? 0),
+                        'articulo' => $articuloArray,
+                        'almacen' => $inventario->almacen,
+                    ];
+                });
+
+                $response = response()->json([
+                    'success' => true,
+                    'data' => [
+                        'data' => $paginated->items(),
+                        'current_page' => $paginated->currentPage(),
+                        'last_page' => $paginated->lastPage(),
+                        'per_page' => $paginated->perPage(),
+                        'total' => $paginated->total(),
+                    ],
+                ]);
+                // Evitar caché del navegador para que siempre se vean productos con/sin stock actualizados
+                $response->header('Cache-Control', 'no-store, no-cache, must-revalidate');
+                $response->header('Pragma', 'no-cache');
+
+                return $response;
+            }
+
+            // Comportamiento anterior (sin paginación)
+            $inventarios = $query->get();
+
+            $productos = $inventarios->map(function ($inventario) use ($baseUrl) {
                 // Usar el mismo método que ArticuloController
                 if ($inventario->articulo) {
                     // Agregar fotografia_url al objeto
                     $this->addImageUrl($inventario->articulo);
-                    
+
                     // Obtener fotografia_url antes de convertir a array
                     $fotografiaUrl = $inventario->articulo->fotografia_url ?? null;
-                    
+
                     // Si no se generó fotografia_url, generarla manualmente
-                    if (!$fotografiaUrl && $inventario->articulo->fotografia) {
+                    if (! $fotografiaUrl && $inventario->articulo->fotografia) {
                         $filename = $inventario->articulo->fotografia;
                         if (strpos($filename, '/') !== false) {
                             $filename = basename($filename);
                         }
-                        $fotografiaUrl = $baseUrl . '/api/articulos/imagen/' . rawurlencode($filename);
+                        $fotografiaUrl = $baseUrl.'/api/articulos/imagen/'.rawurlencode($filename);
                     }
-                    
+
                     // Convertir a array
                     $articuloArray = $inventario->articulo->toArray();
-                    
-                    // Agregar fotografia_url explícitamente al array (siempre)
+
+                    // Agregar fotografia_url explícitamente al array
                     $articuloArray['fotografia_url'] = $fotografiaUrl;
                 } else {
                     $articuloArray = null;
                 }
-                
+
                 return [
                     'inventario_id' => $inventario->id,
                     'articulo_id' => $inventario->articulo_id,
@@ -382,163 +430,32 @@ class VentaController extends Controller
                 ];
             });
 
-            $response = response()->json([
-                'success' => true,
-                'data' => [
-                    'data' => $paginated->items(),
-                    'current_page' => $paginated->currentPage(),
-                    'last_page' => $paginated->lastPage(),
-                    'per_page' => $paginated->perPage(),
-                    'total' => $paginated->total(),
-                ]
-            ]);
-            // Evitar caché del navegador para que siempre se vean productos con/sin stock actualizados
+            $response = response()->json($productos);
             $response->header('Cache-Control', 'no-store, no-cache, must-revalidate');
             $response->header('Pragma', 'no-cache');
+
             return $response;
-        }
-
-        // Comportamiento anterior (sin paginación)
-        $inventarios = $query->get();
-
-        $productos = $inventarios->map(function ($inventario) use ($baseUrl) {
-            // Usar el mismo método que ArticuloController
-            if ($inventario->articulo) {
-                // Agregar fotografia_url al objeto
-                $this->addImageUrl($inventario->articulo);
-                
-                // Obtener fotografia_url antes de convertir a array
-                $fotografiaUrl = $inventario->articulo->fotografia_url ?? null;
-                
-                // Si no se generó fotografia_url, generarla manualmente
-                if (!$fotografiaUrl && $inventario->articulo->fotografia) {
-                    $filename = $inventario->articulo->fotografia;
-                    if (strpos($filename, '/') !== false) {
-                        $filename = basename($filename);
-                    }
-                    $fotografiaUrl = $baseUrl . '/api/articulos/imagen/' . rawurlencode($filename);
-                }
-                
-                // Convertir a array
-                $articuloArray = $inventario->articulo->toArray();
-                
-                // Agregar fotografia_url explícitamente al array
-                $articuloArray['fotografia_url'] = $fotografiaUrl;
-            } else {
-                $articuloArray = null;
-            }
-            
-            return [
-                'inventario_id' => $inventario->id,
-                'articulo_id' => $inventario->articulo_id,
-                'almacen_id' => $inventario->almacen_id,
-                'stock_disponible' => (float) ($inventario->saldo_stock ?? 0),
-                'cantidad' => (float) ($inventario->cantidad ?? 0),
-                'articulo' => $articuloArray,
-                'almacen' => $inventario->almacen,
-            ];
-        });
-
-        $response = response()->json($productos);
-        $response->header('Cache-Control', 'no-store, no-cache, must-revalidate');
-        $response->header('Pragma', 'no-cache');
-        return $response;
         } catch (\Exception $e) {
+            \Log::error('VentaController@productosInventario', ['message' => $e->getMessage(), 'trace' => $e->getTraceAsString()]);
+            if (config('app.debug')) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Error al cargar productos del inventario: '.$e->getMessage(),
+                    'data' => [],
+                ], 500);
+            }
+
             return response()->json([
                 'success' => false,
-                'message' => 'Error al cargar productos del inventario: ' . $e->getMessage(),
-                'data' => []
+                'message' => 'Error al cargar productos del inventario.',
+                'data' => [],
             ], 500);
         }
     }
 
-    public function store(Request $request)
+    public function store(StoreVentaRequest $request)
     {
-        try {
-            // Validar que haya al menos un tipo de pago (tipo_pago_id o pagos array)
-            $tienePagosMixtos = $request->has('pagos') && is_array($request->pagos) && count($request->pagos) > 0;
-            
-            $request->validate([
-                'cliente_id' => 'required|exists:clientes,id',
-                'user_id' => 'required|exists:users,id',
-                'tipo_venta_id' => 'required|exists:tipo_ventas,id',
-                'tipo_pago_id' => $tienePagosMixtos ? 'nullable|exists:tipo_pagos,id' : 'required|exists:tipo_pagos,id',
-                'tipo_comprobante' => 'nullable|string|max:50',
-                'serie_comprobante' => 'nullable|string|max:50',
-                'num_comprobante' => 'nullable|string|max:50',
-                'fecha_hora' => 'required|date',
-                'estado' => 'boolean',
-                'caja_id' => 'nullable|exists:cajas,id',
-                'almacen_id' => 'required|exists:almacenes,id',
-                'detalles' => 'required|array|min:1',
-                'detalles.*.articulo_id' => 'required|exists:articulos,id',
-                'detalles.*.cantidad' => 'required|numeric|min:0.01',
-                'detalles.*.precio' => 'required|numeric|min:0',
-                'detalles.*.descuento' => 'nullable|numeric|min:0',
-                'detalles.*.unidad_medida' => 'nullable|string|in:Unidad,Paquete,Centimetro,Metro',
-                'pagos' => 'nullable|array',
-                'pagos.*.tipo_pago_id' => 'required|exists:tipo_pagos,id',
-                'pagos.*.monto' => 'required|numeric|min:0',
-            ], [
-                'cliente_id.required' => 'El cliente es obligatorio.',
-                'cliente_id.exists' => 'El cliente seleccionado no existe.',
-                'user_id.required' => 'El usuario es obligatorio.',
-                'user_id.exists' => 'El usuario seleccionado no existe.',
-                'tipo_venta_id.required' => 'El tipo de venta es obligatorio.',
-                'tipo_venta_id.exists' => 'El tipo de venta seleccionado no existe.',
-                'tipo_pago_id.required' => 'El tipo de pago es obligatorio.',
-                'tipo_pago_id.exists' => 'El tipo de pago seleccionado no existe.',
-                'tipo_comprobante.string' => 'El tipo de comprobante debe ser una cadena de texto.',
-                'tipo_comprobante.max' => 'El tipo de comprobante no puede tener más de 50 caracteres.',
-                'serie_comprobante.string' => 'La serie del comprobante debe ser una cadena de texto.',
-                'serie_comprobante.max' => 'La serie del comprobante no puede tener más de 50 caracteres.',
-                'num_comprobante.string' => 'El número de comprobante debe ser una cadena de texto.',
-                'num_comprobante.max' => 'El número de comprobante no puede tener más de 50 caracteres.',
-                'fecha_hora.required' => 'La fecha y hora son obligatorias.',
-                'fecha_hora.date' => 'La fecha y hora deben ser una fecha válida.',
-                'estado.boolean' => 'El estado debe ser verdadero o falso.',
-                'caja_id.exists' => 'La caja seleccionada no existe.',
-                'detalles.required' => 'Los detalles de la venta son obligatorios.',
-                'detalles.array' => 'Los detalles deben ser un arreglo.',
-                'detalles.*.articulo_id.required' => 'El artículo es obligatorio en los detalles.',
-                'detalles.*.articulo_id.exists' => 'El artículo seleccionado no existe.',
-                'detalles.*.cantidad.required' => 'La cantidad es obligatoria en los detalles.',
-                'detalles.*.cantidad.numeric' => 'La cantidad debe ser un número válido.',
-                'detalles.*.cantidad.min' => 'La cantidad debe ser al menos 0.01.',
-                'detalles.*.precio.required' => 'El precio es obligatorio en los detalles.',
-                'detalles.*.precio.numeric' => 'El precio debe ser un número.',
-                'detalles.*.descuento.numeric' => 'El descuento debe ser un número.',
-                'pagos.array' => 'Los pagos deben ser un arreglo.',
-                'pagos.*.tipo_pago_id.required' => 'El tipo de pago es obligatorio en los pagos.',
-                'pagos.*.tipo_pago_id.exists' => 'El tipo de pago seleccionado no existe en los pagos.',
-                'pagos.*.monto.required' => 'El monto es obligatorio en los pagos.',
-                'pagos.*.monto.numeric' => 'El monto debe ser un número.',
-                'pagos.*.monto.min' => 'El monto debe ser al menos 0.',
-            ]);
-
-            // Validación adicional: debe haber al menos un tipo de pago
-            if (!$tienePagosMixtos && (!$request->tipo_pago_id || $request->tipo_pago_id === '')) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Debe seleccionar al menos un tipo de pago para la venta',
-                    'errors' => ['tipo_pago_id' => ['El tipo de pago es obligatorio.']]
-                ], 422);
-            }
-
-            if ($tienePagosMixtos && count($request->pagos) === 0) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Debe agregar al menos un pago para la venta',
-                    'errors' => ['pagos' => ['Debe agregar al menos un pago.']]
-                ], 422);
-            }
-        } catch (ValidationException $e) {
-            return response()->json([
-                'message' => 'Error de validación',
-                'errors' => $e->errors()
-            ], 422);
-        }
-
+        $this->authorize('create', Venta::class);
         DB::beginTransaction();
         try {
             // Calcular totales en el backend
@@ -547,13 +464,14 @@ class VentaController extends Controller
             // Validar stock disponible antes de crear la venta
             $almacenId = $request->input('almacen_id'); // Necesitamos el almacén para validar stock
 
-            if (!$almacenId) {
+            if (! $almacenId) {
                 DB::rollBack();
+
                 return response()->json([
                     'message' => 'Error de validación',
                     'errors' => [
-                        'almacen_id' => ['El almacén es requerido para validar el stock disponible.']
-                    ]
+                        'almacen_id' => ['El almacén es requerido para validar el stock disponible.'],
+                    ],
                 ], 422);
             }
 
@@ -568,53 +486,32 @@ class VentaController extends Controller
 
                 if ($inventarios->isEmpty()) {
                     DB::rollBack();
+
                     return response()->json([
                         'message' => 'Error de validación',
                         'errors' => [
-                            "detalles.{$index}.articulo_id" => ["El artículo no está disponible en el inventario del almacén seleccionado."]
-                        ]
+                            "detalles.{$index}.articulo_id" => ['El artículo no está disponible en el inventario del almacén seleccionado.'],
+                        ],
                     ], 422);
                 }
 
-                // Calcular cantidad a deducir según unidad de medida
                 $unidadMedida = $detalle['unidad_medida'] ?? 'Unidad';
                 $articulo = Articulo::find($articuloId);
-                $cantidadDeducir = $cantidadVenta;
-
-                // Calcular cantidad a deducir según la unidad de medida seleccionada
-                // IMPORTANTE: Todo se maneja en METROS como unidad base
-                if ($unidadMedida === 'Paquete' && $articulo) {
-                    // Si es paquete, multiplicar por las unidades por paquete
-                    $unidadEnvase = (float) ($articulo->unidad_envase ?? 1);
-                    $cantidadDeducir = $cantidadVenta * ($unidadEnvase > 0 ? $unidadEnvase : 1);
-                } elseif ($unidadMedida === 'Centimetro') {
-                    // Si es centímetro, dividir por 100 para convertir a metros (unidad base)
-                    // Ejemplo: 0.30 centímetros = 0.003 metros, 30 centímetros = 0.30 metros
-                    $cantidadDeducir = $cantidadVenta / 100;
-                } elseif ($unidadMedida === 'Metro') {
-                    // Si es metro, se descuenta directamente en metros (unidad base)
-                    $cantidadDeducir = $cantidadVenta;
-                } else {
-                    // Si es 'Unidad' u otra, se usa la cantidad directamente (asumiendo que es en metros para productos de metros/centímetros)
-                    $cantidadDeducir = $cantidadVenta;
-                }
-                
-                // Asegurar que cantidadDeducir sea un número válido
-                $cantidadDeducir = (float) $cantidadDeducir;
+                $cantidadDeducir = VentaCantidadConverter::toUnidadBase($articulo, $cantidadVenta, $unidadMedida);
 
                 // Validar que el stock disponible sea suficiente
                 // CRÍTICO: Usar CAST explícito para obtener el stock con precisión decimal
                 // Sumar todos los stocks disponibles de todos los registros de inventario usando SQL directo
                 $stockResult = DB::selectOne(
-                    "SELECT CAST(SUM(saldo_stock) AS DECIMAL(11,3)) as stock_total 
+                    'SELECT CAST(SUM(saldo_stock) AS DECIMAL(11,3)) as stock_total 
                      FROM inventarios 
-                     WHERE articulo_id = ? AND almacen_id = ?",
+                     WHERE articulo_id = ? AND almacen_id = ?',
                     [$articuloId, $almacenId]
                 );
-                
+
                 // CRÍTICO: Redondear stock disponible a 3 decimales para mantener consistencia
                 $stockDisponible = round((float) ($stockResult->stock_total ?? 0), 3);
-                
+
                 // Redondear cantidadDeducir a 3 decimales para mantener consistencia
                 $cantidadDeducir = round($cantidadDeducir, 3);
 
@@ -623,22 +520,24 @@ class VentaController extends Controller
                 // Si la diferencia es menor a 0.0001, consideramos que hay stock suficiente
                 if (($stockDisponible - $cantidadDeducir) < -0.0001) {
                     DB::rollBack();
+
                     return response()->json([
                         'message' => 'Error de validación',
                         'errors' => [
                             "detalles.{$index}.cantidad" => [
                                 "Stock insuficiente. Disponible: {$stockDisponible} (Unidades). Solicitado: {$cantidadDeducir} (Unidades) para {$cantidadVenta} {$unidadMedida}(s).",
-                                "Artículo: " . ($articulo ? $articulo->nombre : "ID {$articuloId}")
-                            ]
-                        ]
+                                'Artículo: '.($articulo ? $articulo->nombre : "ID {$articuloId}"),
+                            ],
+                        ],
                     ], 422);
                 }
             }
 
             // Preparar datos de la venta con el total calculado (guardar almacen_id para ediciones futuras)
-            $ventaData = $request->except(['detalles', 'pagos', 'total', 'numero_cuotas', 'tiempo_dias_cuota']);
+            $ventaData = $request->except(['detalles', 'pagos', 'total', 'numero_cuotas', 'tiempo_dias_cuota', 'user_id']);
             $ventaData['total'] = $resultadoCalculo['total'];
             $ventaData['almacen_id'] = $almacenId;
+            $ventaData['user_id'] = $request->user()->id;
 
             $venta = Venta::create($ventaData);
 
@@ -678,14 +577,14 @@ class VentaController extends Controller
                     // Si es 'Unidad' u otra, se usa la cantidad directamente (asumiendo que es en metros para productos de metros/centímetros)
                     $cantidadDeducir = $cantidadVenta;
                 }
-                
+
                 // Asegurar que cantidadDeducir sea un número válido y redondear a 3 decimales
                 $cantidadDeducir = round((float) $cantidadDeducir, 3);
-                
+
                 // CRÍTICO: Formatear el valor a string con 3 decimales para asegurar precisión
                 $cantidadSalidaFormateada = number_format($cantidadDeducir, 3, '.', '');
                 $cantidadSalidaFinal = (float) $cantidadSalidaFormateada;
-                
+
                 \Log::info("Venta - Descontando stock. Artículo: {$articuloId}, Cantidad: {$cantidadVenta} {$unidadMedida}, A deducir: {$cantidadSalidaFinal}");
 
                 // Registrar movimiento en Kardex y actualizar stock usando KardexService
@@ -700,9 +599,9 @@ class VentaController extends Controller
                     'cantidad_salida' => $cantidadSalidaFinal,
                     'costo_unitario' => $articulo->precio_costo ?? 0, // Usar costo del artículo
                     'precio_unitario' => $detalle['precio'], // Precio de venta (ya calculado)
-                    'observaciones' => 'Venta ' . ($request->tipo_comprobante ?? 'ticket') . ' ' . ($request->num_comprobante ?? ''),
-                    'usuario_id' => $request->user_id,
-                    'venta_id' => $venta->id
+                    'observaciones' => 'Venta '.($request->tipo_comprobante ?? 'ticket').' '.($request->num_comprobante ?? ''),
+                    'usuario_id' => $request->user()->id,
+                    'venta_id' => $venta->id,
                 ]);
             }
 
@@ -714,7 +613,7 @@ class VentaController extends Controller
                 if (strpos($nombreTipoVenta, 'crédito') !== false || strpos($nombreTipoVenta, 'credito') !== false) {
                     // Calcular fecha del próximo pago
                     $fechaInicio = new \DateTime($request->fecha_hora);
-                    $fechaInicio->modify('+' . $request->tiempo_dias_cuota . ' days');
+                    $fechaInicio->modify('+'.$request->tiempo_dias_cuota.' days');
 
                     \App\Models\CreditoVenta::create([
                         'venta_id' => $venta->id,
@@ -723,7 +622,7 @@ class VentaController extends Controller
                         'tiempo_dias_cuota' => $request->tiempo_dias_cuota,
                         'total' => $resultadoCalculo['total'],
                         'estado' => 'pendiente',
-                        'proximo_pago' => $fechaInicio->format('Y-m-d H:i:s')
+                        'proximo_pago' => $fechaInicio->format('Y-m-d H:i:s'),
                     ]);
                 }
             }
@@ -735,7 +634,7 @@ class VentaController extends Controller
                         'venta_id' => $venta->id,
                         'tipo_pago_id' => $pago['tipo_pago_id'],
                         'monto' => $pago['monto'],
-                        'referencia' => $pago['referencia'] ?? null
+                        'referencia' => $pago['referencia'] ?? null,
                     ]);
                 }
             } else {
@@ -744,7 +643,7 @@ class VentaController extends Controller
                     'venta_id' => $venta->id,
                     'tipo_pago_id' => $request->tipo_pago_id,
                     'monto' => $resultadoCalculo['total'], // Usar el total calculado
-                    'referencia' => null
+                    'referencia' => null,
                 ]);
             }
 
@@ -789,10 +688,10 @@ class VentaController extends Controller
             }
 
             DB::commit();
-            
+
             // Log para verificar que el commit se hizo correctamente
             \Log::info("VentaController - Commit de transacción realizado para venta_id: {$venta->id}");
-            
+
             // Verificar el stock después del commit
             foreach ($request->detalles as $detalle) {
                 $articuloId = (int) $detalle['articulo_id'];
@@ -808,7 +707,7 @@ class VentaController extends Controller
             $venta->load(['detalles.articulo', 'tipoVenta', 'cliente']);
 
             // Manually trigger stock check notifications (because Observer runs before detalles are created)
-            Log::info('Manually triggering stock check for venta_id: ' . $venta->id);
+            Log::info('Manually triggering stock check for venta_id: '.$venta->id);
             $this->checkStockAndNotify($venta, $almacenId);
 
             // Invalidar caché del dashboard para reflejar la nueva venta
@@ -824,14 +723,10 @@ class VentaController extends Controller
                 'message' => $e->getMessage(),
                 'file' => $e->getFile(),
                 'line' => $e->getLine(),
-                'trace' => $e->getTraceAsString()
+                'trace' => $e->getTraceAsString(),
             ]);
-            return response()->json([
-                'message' => 'Error al crear la venta',
-                'error' => $e->getMessage(),
-                'file' => basename($e->getFile()),
-                'line' => $e->getLine()
-            ], 500);
+
+            return ApiError::serverError($e, 'Error al crear la venta', 'VentaController@store');
         }
     }
 
@@ -839,14 +734,16 @@ class VentaController extends Controller
     {
         $venta = Venta::find($id);
 
-        if (!$venta) {
+        if (! $venta) {
             return response()->json([
                 'message' => 'Venta no encontrada',
-                'error' => "No se encontró una venta con el ID: {$id}"
+                'error' => "No se encontró una venta con el ID: {$id}",
             ], 404);
         }
 
+        $this->authorize('view', $venta);
         $venta->load(['cliente', 'user', 'tipoVenta', 'tipoPago', 'caja', 'detalles.articulo.medida', 'detalles.articulo.marca']);
+
         return response()->json($venta);
     }
 
@@ -854,12 +751,14 @@ class VentaController extends Controller
     {
         $venta = Venta::find($id);
 
-        if (!$venta) {
+        if (! $venta) {
             return response()->json([
                 'message' => 'Venta no encontrada',
-                'error' => "No se encontró una venta con el ID: {$id}"
+                'error' => "No se encontró una venta con el ID: {$id}",
             ], 404);
         }
+
+        $this->authorize('update', $venta);
 
         // Edición con cambio de productos: se envían detalles + almacen_id (mismo cuerpo que store).
         if ($request->has('detalles') && is_array($request->detalles) && count($request->detalles) > 0) {
@@ -869,7 +768,6 @@ class VentaController extends Controller
         // Actualización simple de cabecera (comportamiento anterior, no se toca).
         $request->validate([
             'cliente_id' => 'required|exists:clientes,id',
-            'user_id' => 'required|exists:users,id',
             'tipo_venta_id' => 'required|exists:tipo_ventas,id',
             'tipo_pago_id' => 'required|exists:tipo_pagos,id',
             'tipo_comprobante' => 'nullable|string|max:50',
@@ -882,8 +780,6 @@ class VentaController extends Controller
         ], [
             'cliente_id.required' => 'El cliente es obligatorio.',
             'cliente_id.exists' => 'El cliente seleccionado no existe.',
-            'user_id.required' => 'El usuario es obligatorio.',
-            'user_id.exists' => 'El usuario seleccionado no existe.',
             'tipo_venta_id.required' => 'El tipo de venta es obligatorio.',
             'tipo_venta_id.exists' => 'El tipo de venta seleccionado no existe.',
             'tipo_pago_id.required' => 'El tipo de pago es obligatorio.',
@@ -902,7 +798,10 @@ class VentaController extends Controller
             'caja_id.exists' => 'La caja seleccionada no existe.',
         ]);
 
-        $venta->update($request->all());
+        $venta->update($request->only([
+            'cliente_id', 'tipo_venta_id', 'tipo_pago_id', 'tipo_comprobante', 'serie_comprobante',
+            'num_comprobante', 'fecha_hora', 'total', 'estado', 'caja_id',
+        ]));
 
         return response()->json($venta);
     }
@@ -914,7 +813,7 @@ class VentaController extends Controller
     private function updateConDetalles(Request $request, Venta $venta)
     {
         $request->validate([
-            'almacen_id' => ($venta->almacen_id ? 'nullable' : 'required') . '|exists:almacenes,id',
+            'almacen_id' => ($venta->almacen_id ? 'nullable' : 'required').'|exists:almacenes,id',
             'detalles' => 'required|array|min:1',
             'detalles.*.articulo_id' => 'required|exists:articulos,id',
             'detalles.*.cantidad' => 'required|numeric|min:0.01',
@@ -971,7 +870,7 @@ class VentaController extends Controller
             // Primero devolvemos para que la validación de los nuevos detalles vea el stock correcto
             foreach ($venta->detalles as $det) {
                 $unidadMedida = $det->unidad_medida ?? 'Unidad';
-                $cantidadEntrada = $this->cantidadEnUnidadBase((int) $det->articulo_id, (float) $det->cantidad, $unidadMedida);
+                $cantidadEntrada = VentaCantidadConverter::toUnidadBaseByArticuloId((int) $det->articulo_id, (float) $det->cantidad, $unidadMedida);
                 $articulo = Articulo::find($det->articulo_id);
                 $this->kardexService->registrarMovimiento([
                     'articulo_id' => $det->articulo_id,
@@ -984,9 +883,9 @@ class VentaController extends Controller
                     'cantidad_salida' => 0,
                     'costo_unitario' => $articulo->precio_costo ?? 0,
                     'precio_unitario' => $det->precio,
-                    'observaciones' => 'Devolución por edición venta #' . $venta->id,
+                    'observaciones' => 'Devolución por edición venta #'.$venta->id,
                     'usuario_id' => $venta->user_id,
-                    'venta_id' => $venta->id
+                    'venta_id' => $venta->id,
                 ]);
             }
 
@@ -995,17 +894,18 @@ class VentaController extends Controller
                 $articuloId = (int) $detalle['articulo_id'];
                 $cantidadVenta = (float) $detalle['cantidad'];
                 $unidadMedida = $detalle['unidad_medida'] ?? 'Unidad';
-                $cantidadDeducir = $this->cantidadEnUnidadBase($articuloId, $cantidadVenta, $unidadMedida);
+                $cantidadDeducir = VentaCantidadConverter::toUnidadBaseByArticuloId($articuloId, $cantidadVenta, $unidadMedida);
                 $stockResult = DB::selectOne(
-                    "SELECT CAST(SUM(saldo_stock) AS DECIMAL(11,3)) as stock_total FROM inventarios WHERE articulo_id = ? AND almacen_id = ?",
+                    'SELECT CAST(SUM(saldo_stock) AS DECIMAL(11,3)) as stock_total FROM inventarios WHERE articulo_id = ? AND almacen_id = ?',
                     [$articuloId, $almacenId]
                 );
                 $stockDisponible = round((float) ($stockResult->stock_total ?? 0), 3);
                 if (($stockDisponible - $cantidadDeducir) < -0.0001) {
                     DB::rollBack();
+
                     return response()->json([
                         'message' => 'Error de validación',
-                        'errors' => ["detalles.{$index}.cantidad" => ["Stock insuficiente. Disponible: {$stockDisponible}."]]
+                        'errors' => ["detalles.{$index}.cantidad" => ["Stock insuficiente. Disponible: {$stockDisponible}."]],
                     ], 422);
                 }
             }
@@ -1014,7 +914,7 @@ class VentaController extends Controller
             DetalleVenta::where('venta_id', $venta->id)->delete();
             \App\Models\DetallePago::where('venta_id', $venta->id)->delete();
 
-            // 4) Actualizar cabecera de la venta
+            // 4) Actualizar cabecera de la venta (persistir almacen_id para ventas antiguas sin dato)
             $venta->update([
                 'cliente_id' => $request->cliente_id,
                 'tipo_venta_id' => $request->tipo_venta_id,
@@ -1023,7 +923,8 @@ class VentaController extends Controller
                 'serie_comprobante' => $request->serie_comprobante ?? $venta->serie_comprobante,
                 'num_comprobante' => $request->num_comprobante ?? $venta->num_comprobante,
                 'fecha_hora' => $request->fecha_hora ?? $venta->fecha_hora,
-                'total' => $nuevoTotal
+                'total' => $nuevoTotal,
+                'almacen_id' => $almacenId,
             ]);
 
             $credito = \App\Models\CreditoVenta::where('venta_id', $venta->id)->first();
@@ -1039,12 +940,12 @@ class VentaController extends Controller
                     'cantidad' => $detalle['cantidad'],
                     'precio' => $detalle['precio'],
                     'descuento' => $detalle['descuento'],
-                    'unidad_medida' => $detalle['unidad_medida']
+                    'unidad_medida' => $detalle['unidad_medida'],
                 ]);
                 $articuloId = (int) $detalle['articulo_id'];
                 $cantidadVenta = (float) $detalle['cantidad'];
                 $unidadMedida = $detalle['unidad_medida'] ?? 'Unidad';
-                $cantidadSalidaFinal = $this->cantidadEnUnidadBase($articuloId, $cantidadVenta, $unidadMedida);
+                $cantidadSalidaFinal = VentaCantidadConverter::toUnidadBaseByArticuloId($articuloId, $cantidadVenta, $unidadMedida);
                 $articulo = Articulo::find($articuloId);
                 $this->kardexService->registrarMovimiento([
                     'articulo_id' => $articuloId,
@@ -1057,9 +958,9 @@ class VentaController extends Controller
                     'cantidad_salida' => $cantidadSalidaFinal,
                     'costo_unitario' => $articulo->precio_costo ?? 0,
                     'precio_unitario' => $detalle['precio'],
-                    'observaciones' => 'Venta (edición) ' . ($request->tipo_comprobante ?? 'ticket') . ' ' . ($request->num_comprobante ?? ''),
-                    'usuario_id' => $request->user_id ?? $venta->user_id,
-                    'venta_id' => $venta->id
+                    'observaciones' => 'Venta (edición) '.($request->tipo_comprobante ?? 'ticket').' '.($request->num_comprobante ?? ''),
+                    'usuario_id' => $request->user()->id,
+                    'venta_id' => $venta->id,
                 ]);
             }
 
@@ -1070,7 +971,7 @@ class VentaController extends Controller
                         'venta_id' => $venta->id,
                         'tipo_pago_id' => $pago['tipo_pago_id'],
                         'monto' => $pago['monto'],
-                        'referencia' => $pago['referencia'] ?? null
+                        'referencia' => $pago['referencia'] ?? null,
                     ]);
                 }
             } else {
@@ -1078,7 +979,7 @@ class VentaController extends Controller
                     'venta_id' => $venta->id,
                     'tipo_pago_id' => $request->tipo_pago_id ?? $venta->tipo_pago_id,
                     'monto' => $nuevoTotal,
-                    'referencia' => null
+                    'referencia' => null,
                 ]);
             }
 
@@ -1114,14 +1015,62 @@ class VentaController extends Controller
             Cache::forget('dashboard.kpis');
             Cache::forget('dashboard.ventas_recientes');
             $venta->load(['cliente', 'user', 'tipoVenta', 'tipoPago', 'caja', 'detalles.articulo.medida', 'detalles.articulo.marca', 'pagos.tipoPago']);
+
             return response()->json($venta);
         } catch (\Exception $e) {
             DB::rollBack();
             \Log::error('Error al actualizar venta con detalles', ['message' => $e->getMessage(), 'trace' => $e->getTraceAsString()]);
+
+            return ApiError::serverError($e, 'Error al actualizar la venta', 'VentaController@updateConDetalles');
+        }
+    }
+
+    /**
+     * Anula una venta activa: revierte inventario/kardex y totales de caja, marca estado Anulado.
+     */
+    public function anular(Request $request, $id)
+    {
+        $user = $request->user();
+        $venta = Venta::with(['detalles.articulo', 'pagos.tipoPago', 'credito', 'tipoVenta'])->find($id);
+
+        if (! $venta) {
             return response()->json([
-                'message' => 'Error al actualizar la venta',
-                'error' => $e->getMessage()
-            ], 500);
+                'message' => 'Venta no encontrada',
+                'error' => "No se encontró una venta con el ID: {$id}",
+            ], 404);
+        }
+
+        if ($user) {
+            $this->authorize('anular', $venta);
+        }
+
+        if ($venta->estado !== 'Activo') {
+            return response()->json(['message' => 'La venta ya no está activa'], 422);
+        }
+
+        $almacenId = $venta->almacen_id ? (int) $venta->almacen_id : null;
+        if (! $almacenId) {
+            $k = Kardex::where('venta_id', $venta->id)
+                ->where('tipo_movimiento', 'venta')
+                ->orderBy('id')
+                ->first();
+            $almacenId = $k ? (int) $k->almacen_id : null;
+        }
+
+        if (! $almacenId) {
+            return response()->json([
+                'message' => 'No se puede determinar el almacén de la venta (falta almacen_id y movimientos de kardex).',
+            ], 422);
+        }
+
+        try {
+            $venta = $this->anularVentaService->anular($venta, $user, $almacenId);
+
+            return response()->json($venta);
+        } catch (\Throwable $e) {
+            Log::error('VentaController@anular', ['message' => $e->getMessage(), 'trace' => $e->getTraceAsString()]);
+
+            return ApiError::serverError($e, 'Error al anular la venta', 'VentaController@anular');
         }
     }
 
@@ -1129,14 +1078,16 @@ class VentaController extends Controller
     {
         $venta = Venta::find($id);
 
-        if (!$venta) {
+        if (! $venta) {
             return response()->json([
                 'message' => 'Venta no encontrada',
-                'error' => "No se encontró una venta con el ID: {$id}"
+                'error' => "No se encontró una venta con el ID: {$id}",
             ], 404);
         }
 
+        $this->authorize('delete', $venta);
         $venta->delete();
+
         return response()->json(null, 204);
     }
 
@@ -1144,26 +1095,28 @@ class VentaController extends Controller
     {
         $venta = Venta::with(['cliente', 'user', 'tipoVenta', 'tipoPago', 'detalles.articulo.marca', 'detalles.articulo.medida', 'pagos.tipoPago'])->find($id);
 
-        if (!$venta) {
+        if (! $venta) {
             return response()->json(['message' => 'Venta no encontrada'], 404);
         }
+
+        $this->authorize('view', $venta);
 
         if ($formato === 'rollo') {
             // Calcular el número en letras antes de pasar a la vista
             $total = (float) $venta->total;
             $parteEntera = (int) $total;
-            
+
             // Asegurar que siempre se calcule el número en letras
             try {
                 $numeroEnLetras = ucfirst(strtolower($this->numeroALetras($parteEntera)));
             } catch (\Exception $e) {
-                \Log::error('Error al convertir número a letras: ' . $e->getMessage());
+                \Log::error('Error al convertir número a letras: '.$e->getMessage());
                 $numeroEnLetras = 'CERO';
             }
-            
+
             $pdf = \Barryvdh\DomPDF\Facade\Pdf::loadView('pdf.venta_rollo', [
                 'venta' => $venta,
-                'numeroEnLetras' => $numeroEnLetras
+                'numeroEnLetras' => $numeroEnLetras,
             ]);
             // 80mm width (226.77pt), altura mínima ajustada - se expandirá según contenido
             $pdf->setPaper([0, 0, 226.77, 300], 'portrait'); // 80mm x ~106mm (ajustable)
@@ -1190,36 +1143,61 @@ class VentaController extends Controller
         $decenas = ['', 'DIEZ', 'VEINTE', 'TREINTA', 'CUARENTA', 'CINCUENTA', 'SESENTA', 'SETENTA', 'OCHENTA', 'NOVENTA'];
         $decenasEspeciales = ['DIEZ', 'ONCE', 'DOCE', 'TRECE', 'CATORCE', 'QUINCE', 'DIECISÉIS', 'DIECISIETE', 'DIECIOCHO', 'DIECINUEVE'];
         $centenas = ['', 'CIEN', 'DOSCIENTOS', 'TRESCIENTOS', 'CUATROCIENTOS', 'QUINIENTOS', 'SEISCIENTOS', 'SETECIENTOS', 'OCHOCIENTOS', 'NOVECIENTOS'];
-        
+
         $numero = (int) $numero;
-        if ($numero == 0) return 'CERO';
-        if ($numero < 10) return $unidades[$numero];
-        if ($numero < 20) return $decenasEspeciales[$numero - 10];
+        if ($numero == 0) {
+            return 'CERO';
+        }
+        if ($numero < 10) {
+            return $unidades[$numero];
+        }
+        if ($numero < 20) {
+            return $decenasEspeciales[$numero - 10];
+        }
         if ($numero < 100) {
-            $decena = (int)($numero / 10);
+            $decena = (int) ($numero / 10);
             $unidad = $numero % 10;
-            if ($unidad == 0) return $decenas[$decena];
-            if ($decena == 2) return 'VEINTI' . $unidades[$unidad];
-            return $decenas[$decena] . ' Y ' . $unidades[$unidad];
+            if ($unidad == 0) {
+                return $decenas[$decena];
+            }
+            if ($decena == 2) {
+                return 'VEINTI'.$unidades[$unidad];
+            }
+
+            return $decenas[$decena].' Y '.$unidades[$unidad];
         }
         if ($numero < 1000) {
-            $centena = (int)($numero / 100);
+            $centena = (int) ($numero / 100);
             $resto = $numero % 100;
-            if ($centena == 1 && $resto == 0) return 'CIEN';
-            if ($centena == 1) return 'CIENTO ' . $this->numeroALetras($resto);
-            if ($resto == 0) return $centenas[$centena];
-            return $centenas[$centena] . ' ' . $this->numeroALetras($resto);
+            if ($centena == 1 && $resto == 0) {
+                return 'CIEN';
+            }
+            if ($centena == 1) {
+                return 'CIENTO '.$this->numeroALetras($resto);
+            }
+            if ($resto == 0) {
+                return $centenas[$centena];
+            }
+
+            return $centenas[$centena].' '.$this->numeroALetras($resto);
         }
         if ($numero < 1000000) {
-            $millar = (int)($numero / 1000);
+            $millar = (int) ($numero / 1000);
             $resto = $numero % 1000;
             if ($millar == 1) {
-                if ($resto == 0) return 'MIL';
-                return 'MIL ' . $this->numeroALetras($resto);
+                if ($resto == 0) {
+                    return 'MIL';
+                }
+
+                return 'MIL '.$this->numeroALetras($resto);
             }
-            if ($resto == 0) return $this->numeroALetras($millar) . ' MIL';
-            return $this->numeroALetras($millar) . ' MIL ' . $this->numeroALetras($resto);
+            if ($resto == 0) {
+                return $this->numeroALetras($millar).' MIL';
+            }
+
+            return $this->numeroALetras($millar).' MIL '.$this->numeroALetras($resto);
         }
+
         return 'NÚMERO MUY GRANDE';
     }
 
@@ -1228,6 +1206,7 @@ class VentaController extends Controller
      */
     public function exportReporteDetalladoPDF(Request $request)
     {
+        $this->authorize('viewAny', Venta::class);
         $request->validate([
             'fecha_desde' => 'nullable|date',
             'fecha_hasta' => 'nullable|date|after_or_equal:fecha_desde',
@@ -1242,7 +1221,7 @@ class VentaController extends Controller
                 'tipoPago',
                 'detalles.articulo',
                 'detalles.articulo.categoria',
-                'pagos.tipoPago'
+                'pagos.tipoPago',
             ]);
 
             // Aplicar filtros
@@ -1283,18 +1262,20 @@ class VentaController extends Controller
                     'cantidad_ventas' => $ventas->count(),
                     'fecha_desde' => $request->fecha_desde,
                     'fecha_hasta' => $request->fecha_hasta,
-                ]
+                ],
             ];
 
             $pdf = \Barryvdh\DomPDF\Facade\Pdf::loadView('pdf.reporte-ventas-detallado', $datos);
             $pdf->setPaper('a4', 'portrait');
 
-            $fileName = 'reporte_ventas_detallado_' . ($request->fecha_desde ?? 'all') . '_' . ($request->fecha_hasta ?? 'all') . '.pdf';
+            $fileName = 'reporte_ventas_detallado_'.($request->fecha_desde ?? 'all').'_'.($request->fecha_hasta ?? 'all').'.pdf';
+
             return $pdf->download($fileName);
         } catch (\Exception $e) {
-            \Log::error('Error al exportar reporte detallado PDF: ' . $e->getMessage());
+            \Log::error('Error al exportar reporte detallado PDF: '.$e->getMessage());
+
             return response()->json([
-                'message' => 'Error al exportar PDF: ' . $e->getMessage()
+                'message' => 'Error al exportar PDF: '.$e->getMessage(),
             ], 500);
         }
     }
@@ -1304,6 +1285,7 @@ class VentaController extends Controller
      */
     public function exportReporteGeneralPDF(Request $request)
     {
+        $this->authorize('viewAny', Venta::class);
         $request->validate([
             'fecha_desde' => 'nullable|date',
             'fecha_hasta' => 'nullable|date|after_or_equal:fecha_desde',
@@ -1317,7 +1299,7 @@ class VentaController extends Controller
                 'tipoVenta',
                 'tipoPago',
                 'caja.sucursal',
-                'pagos.tipoPago'
+                'pagos.tipoPago',
             ]);
 
             // Aplicar filtros
@@ -1348,7 +1330,7 @@ class VentaController extends Controller
                     'fecha' => $fecha,
                     'cantidad' => $ventasDelDia->count(),
                     'total' => $ventasDelDia->sum('total'),
-                    'ventas' => $ventasDelDia
+                    'ventas' => $ventasDelDia,
                 ];
             }
 
@@ -1359,18 +1341,20 @@ class VentaController extends Controller
                     'cantidad_ventas' => $ventas->count(),
                     'fecha_desde' => $request->fecha_desde,
                     'fecha_hasta' => $request->fecha_hasta,
-                ]
+                ],
             ];
 
             $pdf = \Barryvdh\DomPDF\Facade\Pdf::loadView('pdf.reporte-ventas-general', $datos);
             $pdf->setPaper('a4', 'landscape');
 
-            $fileName = 'reporte_ventas_general_' . ($request->fecha_desde ?? 'all') . '_' . ($request->fecha_hasta ?? 'all') . '.pdf';
+            $fileName = 'reporte_ventas_general_'.($request->fecha_desde ?? 'all').'_'.($request->fecha_hasta ?? 'all').'.pdf';
+
             return $pdf->download($fileName);
         } catch (\Exception $e) {
-            \Log::error('Error al exportar reporte general PDF: ' . $e->getMessage());
+            \Log::error('Error al exportar reporte general PDF: '.$e->getMessage());
+
             return response()->json([
-                'message' => 'Error al exportar PDF: ' . $e->getMessage()
+                'message' => 'Error al exportar PDF: '.$e->getMessage(),
             ], 500);
         }
     }
@@ -1380,12 +1364,13 @@ class VentaController extends Controller
      */
     private function checkStockAndNotify(Venta $venta, $almacenId): void
     {
-        if (!$venta->detalles || $venta->detalles->isEmpty()) {
-            Log::warning('No detalles found for venta_id: ' . $venta->id);
+        if (! $venta->detalles || $venta->detalles->isEmpty()) {
+            Log::warning('No detalles found for venta_id: '.$venta->id);
+
             return;
         }
 
-        Log::info('Checking stock for ' . $venta->detalles->count() . ' products');
+        Log::info('Checking stock for '.$venta->detalles->count().' products');
 
         // Check if it's a credit sale first
         if ($venta->tipoVenta && strtolower($venta->tipoVenta->nombre_tipo_ventas) === 'crédito') {
@@ -1400,8 +1385,9 @@ class VentaController extends Controller
         foreach ($venta->detalles as $detalle) {
             $articulo = $detalle->articulo;
 
-            if (!$articulo) {
-                Log::warning('Articulo not found for detalle_id: ' . $detalle->id);
+            if (! $articulo) {
+                Log::warning('Articulo not found for detalle_id: '.$detalle->id);
+
                 continue;
             }
 
@@ -1410,8 +1396,9 @@ class VentaController extends Controller
                 ->where('almacen_id', $almacenId)
                 ->first();
 
-            if (!$inventario) {
-                Log::warning('Inventario not found for articulo_id: ' . $articulo->id . ' in almacen_id: ' . $almacenId);
+            if (! $inventario) {
+                Log::warning('Inventario not found for articulo_id: '.$articulo->id.' in almacen_id: '.$almacenId);
+
                 continue;
             }
 
@@ -1424,6 +1411,7 @@ class VentaController extends Controller
             if ($currentStock <= 0) {
                 Log::info("Sending OUT OF STOCK notification for '{$articulo->nombre}' - Stock: {$currentStock}");
                 NotificationHelper::notifyAdmins(new OutOfStockNotification($articulo));
+
                 continue; // No verificar low stock si ya está sin stock
             }
 

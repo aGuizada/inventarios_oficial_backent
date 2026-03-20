@@ -3,10 +3,13 @@
 namespace App\Http\Controllers\API;
 
 use App\Http\Controllers\Controller;
+use App\Http\Requests\Traspaso\StoreTraspasoRequest;
+use App\Http\Requests\Traspaso\UpdateTraspasoRequest;
 use App\Http\Traits\HasPagination;
-use App\Models\Traspaso;
 use App\Models\DetalleTraspaso;
 use App\Models\Inventario;
+use App\Models\Traspaso;
+use App\Support\ApiError;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 
@@ -16,6 +19,8 @@ class TraspasoController extends Controller
 
     public function index(Request $request)
     {
+        $user = $request->user();
+        $this->authorize('viewAny', Traspaso::class);
         $query = Traspaso::with([
             'sucursalOrigen',
             'sucursalDestino',
@@ -24,8 +29,8 @@ class TraspasoController extends Controller
             'user',
             'usuarioAprobador',
             'usuarioReceptor',
-            'detalles.articulo'
-        ]);
+            'detalles.articulo',
+        ])->forAuthenticatedList($user);
 
         $searchableFields = [
             'id',
@@ -35,7 +40,7 @@ class TraspasoController extends Controller
             'motivo',
             'sucursalOrigen.nombre',
             'sucursalDestino.nombre',
-            'user.name'
+            'user.name',
         ];
 
         $query = $this->applySearch($query, $request, $searchableFields);
@@ -44,79 +49,59 @@ class TraspasoController extends Controller
         return $this->paginateResponse($query, $request, 15, 100);
     }
 
-    public function store(Request $request)
+    public function store(StoreTraspasoRequest $request)
     {
-        $request->validate([
-            'codigo_traspaso' => 'required|string|max:50|unique:traspasos',
-            'sucursal_origen_id' => 'required|exists:sucursales,id',
-            'sucursal_destino_id' => 'required|exists:sucursales,id',
-            'almacen_origen_id' => 'required|exists:almacenes,id',
-            'almacen_destino_id' => 'required|exists:almacenes,id',
-            'user_id' => 'required|exists:users,id',
-            'fecha_solicitud' => 'required|date',
-            'fecha_aprobacion' => 'nullable|date',
-            'fecha_entrega' => 'nullable|date',
-            'tipo_traspaso' => 'nullable|string|max:50',
-            'estado' => 'nullable|string|max:50',
-            'motivo' => 'nullable|string',
-            'observaciones' => 'nullable|string',
-            'usuario_aprobador_id' => 'nullable|exists:users,id',
-            'usuario_receptor_id' => 'nullable|exists:users,id',
-            'detalles' => 'nullable|array',
-            'detalles.*.articulo_id' => 'required|exists:articulos,id',
-            'detalles.*.inventario_id' => 'required|exists:inventarios,id',
-            'detalles.*.cantidad_solicitada' => 'required|integer|min:1',
-            'detalles.*.precio_costo' => 'nullable|numeric',
-            'detalles.*.precio_venta' => 'nullable|numeric',
-        ]);
-
         DB::beginTransaction();
         try {
             // Asegurar que el estado inicial sea PENDIENTE
-            $traspasoData = $request->except('detalles');
+            $traspasoData = $request->except(['detalles', 'user_id']);
+            $traspasoData['user_id'] = $request->user()->id;
             $traspasoData['estado'] = $traspasoData['estado'] ?? 'PENDIENTE';
-            
+
             // Formatear fecha_solicitud si viene en formato ISO
             if (isset($traspasoData['fecha_solicitud'])) {
                 try {
                     $fechaSolicitud = \Carbon\Carbon::parse($traspasoData['fecha_solicitud']);
                     $traspasoData['fecha_solicitud'] = $fechaSolicitud->format('Y-m-d H:i:s');
                 } catch (\Exception $e) {
-                    \Log::warning('Error al formatear fecha_solicitud: ' . $e->getMessage());
+                    \Log::warning('Error al formatear fecha_solicitud: '.$e->getMessage());
                     // Si falla, usar la fecha actual
                     $traspasoData['fecha_solicitud'] = now()->format('Y-m-d H:i:s');
                 }
             }
-            
+
             $traspaso = Traspaso::create($traspasoData);
 
             if ($request->has('detalles') && is_array($request->detalles)) {
                 foreach ($request->detalles as $detalle) {
                     // Validar que el inventario_id existe
-                    if (!isset($detalle['inventario_id'])) {
+                    if (! isset($detalle['inventario_id'])) {
                         DB::rollBack();
+
                         return response()->json([
                             'error' => 'Error al crear el traspaso',
-                            'message' => 'El campo inventario_id es requerido en los detalles'
+                            'message' => 'El campo inventario_id es requerido en los detalles',
                         ], 400);
                     }
 
                     // Validar que el inventario existe
                     $inventario = Inventario::find($detalle['inventario_id']);
-                    if (!$inventario) {
+                    if (! $inventario) {
                         DB::rollBack();
+
                         return response()->json([
                             'error' => 'Error al crear el traspaso',
-                            'message' => "El inventario con ID {$detalle['inventario_id']} no existe"
+                            'message' => "El inventario con ID {$detalle['inventario_id']} no existe",
                         ], 400);
                     }
 
                     // Validar que el inventario pertenece al almacén origen
                     if ($inventario->almacen_id != $traspasoData['almacen_origen_id']) {
                         DB::rollBack();
+
                         return response()->json([
                             'error' => 'Error al crear el traspaso',
-                            'message' => "El inventario con ID {$detalle['inventario_id']} no pertenece al almacén origen seleccionado"
+                            'message' => "El inventario con ID {$detalle['inventario_id']} no pertenece al almacén origen seleccionado",
                         ], 400);
                     }
 
@@ -134,6 +119,7 @@ class TraspasoController extends Controller
 
             DB::commit();
             $traspaso->load('detalles');
+
             return response()->json($traspaso, 201);
         } catch (\Exception $e) {
             DB::rollBack();
@@ -141,17 +127,16 @@ class TraspasoController extends Controller
                 'message' => $e->getMessage(),
                 'file' => $e->getFile(),
                 'line' => $e->getLine(),
-                'trace' => $e->getTraceAsString()
+                'trace' => $e->getTraceAsString(),
             ]);
-            return response()->json([
-                'error' => 'Error al crear el traspaso',
-                'message' => $e->getMessage()
-            ], 500);
+
+            return ApiError::serverError($e, 'Error al crear el traspaso', 'TraspasoController@store');
         }
     }
 
     public function show(Traspaso $traspaso)
     {
+        $this->authorize('view', $traspaso);
         $traspaso->load([
             'sucursalOrigen',
             'sucursalDestino',
@@ -161,35 +146,18 @@ class TraspasoController extends Controller
             'usuarioAprobador',
             'usuarioReceptor',
             'detalles.articulo',
-            'historial'
+            'historial',
         ]);
+
         return response()->json($traspaso);
     }
 
-    public function update(Request $request, Traspaso $traspaso)
+    public function update(UpdateTraspasoRequest $request, Traspaso $traspaso)
     {
-        $request->validate([
-            'codigo_traspaso' => 'required|string|max:50|unique:traspasos,codigo_traspaso,' . $traspaso->id,
-            'sucursal_origen_id' => 'required|exists:sucursales,id',
-            'sucursal_destino_id' => 'required|exists:sucursales,id',
-            'almacen_origen_id' => 'required|exists:almacenes,id',
-            'almacen_destino_id' => 'required|exists:almacenes,id',
-            'user_id' => 'required|exists:users,id',
-            'fecha_solicitud' => 'required|date',
-            'fecha_aprobacion' => 'nullable|date',
-            'fecha_entrega' => 'nullable|date',
-            'tipo_traspaso' => 'nullable|string|max:50',
-            'estado' => 'nullable|string|max:50',
-            'motivo' => 'nullable|string',
-            'observaciones' => 'nullable|string',
-            'usuario_aprobador_id' => 'nullable|exists:users,id',
-            'usuario_receptor_id' => 'nullable|exists:users,id',
-        ]);
-
         $camposPermitidos = [
             'almacen_origen_id', 'almacen_destino_id', 'fecha_solicitud', 'fecha_entrega',
             'tipo_traspaso', 'estado', 'motivo', 'observaciones',
-            'usuario_aprobador_id', 'usuario_receptor_id'
+            'usuario_aprobador_id', 'usuario_receptor_id',
         ];
         $traspaso->update($request->only($camposPermitidos));
 
@@ -198,7 +166,9 @@ class TraspasoController extends Controller
 
     public function destroy(Traspaso $traspaso)
     {
+        $this->authorize('delete', $traspaso);
         $traspaso->delete();
+
         return response()->json(null, 204);
     }
 
@@ -208,31 +178,34 @@ class TraspasoController extends Controller
      */
     public function aprobar(Request $request, Traspaso $traspaso)
     {
+        $this->authorize('aprobar', $traspaso);
         if ($traspaso->estado !== 'PENDIENTE') {
             return response()->json([
-                'error' => 'Solo se pueden aprobar traspasos en estado PENDIENTE'
+                'error' => 'Solo se pueden aprobar traspasos en estado PENDIENTE',
             ], 400);
         }
 
         DB::beginTransaction();
         try {
             $traspaso->load('detalles.inventarioOrigen');
-            
+
             // Validar stock disponible antes de aprobar
             foreach ($traspaso->detalles as $detalle) {
                 $inventarioOrigen = Inventario::find($detalle->inventario_origen_id);
-                
-                if (!$inventarioOrigen) {
+
+                if (! $inventarioOrigen) {
                     DB::rollBack();
+
                     return response()->json([
-                        'error' => "El inventario origen del artículo {$detalle->articulo_id} no existe"
+                        'error' => "El inventario origen del artículo {$detalle->articulo_id} no existe",
                     ], 400);
                 }
 
                 if ($inventarioOrigen->saldo_stock < $detalle->cantidad_solicitada) {
                     DB::rollBack();
+
                     return response()->json([
-                        'error' => "Stock insuficiente para el artículo. Stock disponible: {$inventarioOrigen->saldo_stock}, solicitado: {$detalle->cantidad_solicitada}"
+                        'error' => "Stock insuficiente para el artículo. Stock disponible: {$inventarioOrigen->saldo_stock}, solicitado: {$detalle->cantidad_solicitada}",
                     ], 400);
                 }
             }
@@ -240,20 +213,21 @@ class TraspasoController extends Controller
             // Descontar del inventario origen
             foreach ($traspaso->detalles as $detalle) {
                 $inventarioOrigen = Inventario::find($detalle->inventario_origen_id);
-                
-                if (!$inventarioOrigen) {
+
+                if (! $inventarioOrigen) {
                     DB::rollBack();
+
                     return response()->json([
-                        'error' => "El inventario origen del artículo {$detalle->articulo_id} no existe"
+                        'error' => "El inventario origen del artículo {$detalle->articulo_id} no existe",
                     ], 400);
                 }
-                
+
                 // Descontar cantidad y saldo_stock del inventario origen
                 $cantidadADescontar = $detalle->cantidad_solicitada;
-                
+
                 $inventarioOrigen->cantidad -= $cantidadADescontar;
                 $inventarioOrigen->saldo_stock -= $cantidadADescontar;
-                
+
                 // Asegurar que no queden valores negativos
                 if ($inventarioOrigen->cantidad < 0) {
                     $inventarioOrigen->cantidad = 0;
@@ -261,7 +235,7 @@ class TraspasoController extends Controller
                 if ($inventarioOrigen->saldo_stock < 0) {
                     $inventarioOrigen->saldo_stock = 0;
                 }
-                
+
                 $inventarioOrigen->save();
 
                 // Actualizar detalle
@@ -273,16 +247,18 @@ class TraspasoController extends Controller
             // Actualizar traspaso
             $traspaso->estado = 'EN_TRANSITO';
             $traspaso->fecha_aprobacion = now();
-            $traspaso->usuario_aprobador_id = $request->user_id ?? auth()->id();
+            $traspaso->usuario_aprobador_id = auth()->id();
             $traspaso->save();
 
             DB::commit();
             $traspaso->load('detalles');
+
             return response()->json($traspaso);
         } catch (\Exception $e) {
             DB::rollBack();
+
             return response()->json([
-                'error' => 'Error al aprobar el traspaso: ' . $e->getMessage()
+                'error' => 'Error al aprobar el traspaso: '.$e->getMessage(),
             ], 500);
         }
     }
@@ -293,16 +269,17 @@ class TraspasoController extends Controller
      */
     public function recibir(Request $request, Traspaso $traspaso)
     {
+        $this->authorize('recibir', $traspaso);
         if ($traspaso->estado !== 'EN_TRANSITO') {
             return response()->json([
-                'error' => 'Solo se pueden recibir traspasos en estado EN_TRANSITO'
+                'error' => 'Solo se pueden recibir traspasos en estado EN_TRANSITO',
             ], 400);
         }
 
         DB::beginTransaction();
         try {
             $traspaso->load('detalles');
-            
+
             // Agregar al inventario destino
             foreach ($traspaso->detalles as $detalle) {
                 // Buscar o crear inventario en el almacén destino
@@ -319,13 +296,13 @@ class TraspasoController extends Controller
                     // Crear nuevo inventario en destino
                     // Obtener datos del inventario origen para copiar fecha_vencimiento si existe
                     $inventarioOrigen = Inventario::find($detalle->inventario_origen_id);
-                    
+
                     Inventario::create([
                         'almacen_id' => $traspaso->almacen_destino_id,
                         'articulo_id' => $detalle->articulo_id,
                         'cantidad' => $detalle->cantidad_enviada,
                         'saldo_stock' => $detalle->cantidad_enviada,
-                        'fecha_vencimiento' => $inventarioOrigen->fecha_vencimiento ?? null
+                        'fecha_vencimiento' => $inventarioOrigen->fecha_vencimiento ?? null,
                     ]);
                 }
 
@@ -338,16 +315,18 @@ class TraspasoController extends Controller
             // Actualizar traspaso
             $traspaso->estado = 'RECIBIDO';
             $traspaso->fecha_entrega = now();
-            $traspaso->usuario_receptor_id = $request->user_id ?? auth()->id();
+            $traspaso->usuario_receptor_id = auth()->id();
             $traspaso->save();
 
             DB::commit();
             $traspaso->load('detalles');
+
             return response()->json($traspaso);
         } catch (\Exception $e) {
             DB::rollBack();
+
             return response()->json([
-                'error' => 'Error al recibir el traspaso: ' . $e->getMessage()
+                'error' => 'Error al recibir el traspaso: '.$e->getMessage(),
             ], 500);
         }
     }
@@ -357,18 +336,20 @@ class TraspasoController extends Controller
      */
     public function rechazar(Request $request, Traspaso $traspaso)
     {
+        $this->authorize('rechazar', $traspaso);
         if ($traspaso->estado !== 'PENDIENTE') {
             return response()->json([
-                'error' => 'Solo se pueden rechazar traspasos en estado PENDIENTE'
+                'error' => 'Solo se pueden rechazar traspasos en estado PENDIENTE',
             ], 400);
         }
 
         $traspaso->estado = 'RECHAZADO';
         $traspaso->motivo = $request->motivo ?? 'Traspaso rechazado';
-        $traspaso->usuario_aprobador_id = $request->user_id ?? auth()->id();
+        $traspaso->usuario_aprobador_id = auth()->id();
         $traspaso->save();
 
         $traspaso->load('detalles');
+
         return response()->json($traspaso);
     }
 }

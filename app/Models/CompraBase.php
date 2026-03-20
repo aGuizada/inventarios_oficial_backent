@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 
@@ -59,5 +60,17 @@ class CompraBase extends Model
     public function compraCredito()
     {
         return $this->hasOne(CompraCredito::class, 'id');
+    }
+
+    /**
+     * Listado: vendedores solo sus compras; administradores todas.
+     */
+    public function scopeForAuthenticatedList(Builder $query, ?User $user): Builder
+    {
+        if ($user && ! $user->isAdministrador()) {
+            $query->where('user_id', $user->id);
+        }
+
+        return $query;
     }
 }

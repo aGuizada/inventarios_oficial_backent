@@ -4,15 +4,17 @@ use Illuminate\Database\Migrations\Migration;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\Schema;
 
-return new class extends Migration {
+return new class extends Migration
+{
     public function up(): void
     {
         Schema::create('marcas', function (Blueprint $table) {
             $table->increments('id');
             $table->string('nombre', 50);
+            // No usar ->after() aquí si ya se llamó timestamps(): MySQL genera SQL inválido.
+            $table->string('logo', 255)->nullable();
             $table->tinyInteger('estado')->default(1);
             $table->timestamps();
-            $table->string('logo', 255)->nullable()->after('nombre');
         });
     }
 

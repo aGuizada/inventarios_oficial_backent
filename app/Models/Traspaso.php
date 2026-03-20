@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 
@@ -72,5 +73,17 @@ class Traspaso extends Model
     public function historial()
     {
         return $this->hasMany(HistorialTraspaso::class);
+    }
+
+    /**
+     * Listado: creador o administrador.
+     */
+    public function scopeForAuthenticatedList(Builder $query, ?User $user): Builder
+    {
+        if ($user && ! $user->isAdministrador()) {
+            $query->where('user_id', $user->id);
+        }
+
+        return $query;
     }
 }

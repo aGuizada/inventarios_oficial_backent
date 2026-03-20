@@ -3,8 +3,11 @@
 namespace App\Http\Controllers\API;
 
 use App\Http\Controllers\Controller;
+use App\Http\Requests\Caja\StoreCajaRequest;
+use App\Http\Requests\Caja\UpdateCajaRequest;
 use App\Http\Traits\HasPagination;
 use App\Models\Caja;
+use App\Support\ApiError;
 use Illuminate\Http\Request;
 
 class CajaController extends Controller
@@ -14,59 +17,62 @@ class CajaController extends Controller
     public function index(Request $request)
     {
         try {
-            $query = Caja::with(['sucursal', 'user']);
+            $user = $request->user();
+            $this->authorize('viewAny', Caja::class);
+            $query = Caja::with(['sucursal', 'user'])
+                ->forAuthenticatedList($user);
 
-        // Campos buscables: ID, sucursal, usuario, fechas
-        $searchableFields = [
-            'id',
-            'sucursal.nombre',
-            'user.name',
-            'user.email',
-            'fecha_apertura',
-            'fecha_cierre'
-        ];
+            // Campos buscables: ID, sucursal, usuario, fechas
+            $searchableFields = [
+                'id',
+                'sucursal.nombre',
+                'user.name',
+                'user.email',
+                'fecha_apertura',
+                'fecha_cierre',
+            ];
 
-        // Aplicar búsqueda
-        $query = $this->applySearch($query, $request, $searchableFields);
+            // Aplicar búsqueda
+            $query = $this->applySearch($query, $request, $searchableFields);
 
-        // Campos ordenables
-        $sortableFields = ['id', 'fecha_apertura', 'fecha_cierre', 'saldo_inicial', 'estado'];
+            // Campos ordenables
+            $sortableFields = ['id', 'fecha_apertura', 'fecha_cierre', 'saldo_inicial', 'estado'];
 
-        // Aplicar ordenamiento
-        $query = $this->applySorting($query, $request, $sortableFields, 'id', 'desc');
+            // Aplicar ordenamiento
+            $query = $this->applySorting($query, $request, $sortableFields, 'id', 'desc');
 
-        // Aplicar paginación
-        $response = $this->paginateResponse($query, $request, 15, 100);
-        
-        // Calcular saldo disponible para cada caja en la respuesta
-        if (isset($response->original['data']['data'])) {
-            foreach ($response->original['data']['data'] as &$caja) {
-                // Calcular saldo disponible
-                $saldoInicial = (float) ($caja['saldo_inicial'] ?? 0);
-                $depositos = (float) ($caja['depositos'] ?? 0);
-                $ventas = (float) ($caja['ventas'] ?? 0);
-                $pagosEfectivo = (float) ($caja['pagos_efectivo'] ?? 0);
-                $pagosQr = (float) ($caja['pagos_qr'] ?? 0);
-                $pagosTransferencia = (float) ($caja['pagos_transferencia'] ?? 0);
-                $cuotasVentasCredito = (float) ($caja['cuotas_ventas_credito'] ?? 0);
-                $salidas = (float) ($caja['salidas'] ?? 0);
-                $comprasContado = (float) ($caja['compras_contado'] ?? 0);
-                $comprasCredito = (float) ($caja['compras_credito'] ?? 0);
-                $saldoFaltante = (float) ($caja['saldo_faltante'] ?? 0);
-                
-                $saldoDisponible = $saldoInicial + $depositos + $ventas + $pagosEfectivo + $pagosQr + 
-                                  $pagosTransferencia + $cuotasVentasCredito - $salidas - 
-                                  $comprasContado - $comprasCredito - $saldoFaltante;
-                
-                // Asegurar que el saldo no sea negativo (si es negativo, mostrar 0)
-                $saldoDisponible = max(0, round($saldoDisponible, 2));
-                
-                // Actualizar el saldo_caja en el objeto caja
-                $caja['saldo_caja'] = $saldoDisponible;
+            // Aplicar paginación
+            $response = $this->paginateResponse($query, $request, 15, 100);
+
+            // Calcular saldo disponible para cada caja en la respuesta
+            if (isset($response->original['data']['data'])) {
+                foreach ($response->original['data']['data'] as &$caja) {
+                    // Calcular saldo disponible
+                    $saldoInicial = (float) ($caja['saldo_inicial'] ?? 0);
+                    $depositos = (float) ($caja['depositos'] ?? 0);
+                    $ventas = (float) ($caja['ventas'] ?? 0);
+                    $pagosEfectivo = (float) ($caja['pagos_efectivo'] ?? 0);
+                    $pagosQr = (float) ($caja['pagos_qr'] ?? 0);
+                    $pagosTransferencia = (float) ($caja['pagos_transferencia'] ?? 0);
+                    $cuotasVentasCredito = (float) ($caja['cuotas_ventas_credito'] ?? 0);
+                    $salidas = (float) ($caja['salidas'] ?? 0);
+                    $comprasContado = (float) ($caja['compras_contado'] ?? 0);
+                    $comprasCredito = (float) ($caja['compras_credito'] ?? 0);
+                    $saldoFaltante = (float) ($caja['saldo_faltante'] ?? 0);
+
+                    $saldoDisponible = $saldoInicial + $depositos + $ventas + $pagosEfectivo + $pagosQr +
+                                      $pagosTransferencia + $cuotasVentasCredito - $salidas -
+                                      $comprasContado - $comprasCredito - $saldoFaltante;
+
+                    // Asegurar que el saldo no sea negativo (si es negativo, mostrar 0)
+                    $saldoDisponible = max(0, round($saldoDisponible, 2));
+
+                    // Actualizar el saldo_caja en el objeto caja
+                    $caja['saldo_caja'] = $saldoDisponible;
+                }
             }
-        }
-        
-        return $response;
+
+            return $response;
         } catch (\Exception $e) {
             return response()->json([
                 'success' => true,
@@ -75,71 +81,25 @@ class CajaController extends Controller
                     'current_page' => 1,
                     'last_page' => 1,
                     'total' => 0,
-                ]
+                ],
             ]);
         }
     }
 
-    public function store(Request $request)
+    public function store(StoreCajaRequest $request)
     {
         try {
-            $request->validate([
-                'sucursal_id' => 'required|exists:sucursales,id',
-                'user_id' => 'required|exists:users,id',
-                'fecha_apertura' => 'required|date',
-                'fecha_cierre' => 'nullable|date',
-                'saldo_inicial' => 'required|numeric',
-                'depositos' => 'nullable|numeric',
-                'salidas' => 'nullable|numeric',
-                'ventas' => 'nullable|numeric',
-                'ventas_contado' => 'nullable|numeric',
-                'ventas_credito' => 'nullable|numeric',
-                'pagos_efectivo' => 'nullable|numeric',
-                'pagos_qr' => 'nullable|numeric',
-                'pagos_transferencia' => 'nullable|numeric',
-                'cuotas_ventas_credito' => 'nullable|numeric',
-                'compras_contado' => 'nullable|numeric',
-                'compras_credito' => 'nullable|numeric',
-                'saldo_faltante' => 'nullable|numeric',
-                'saldo_caja' => 'nullable|numeric',
-                'estado' => 'boolean',
-            ], [
-                'sucursal_id.required' => 'La sucursal es obligatoria.',
-                'sucursal_id.exists' => 'La sucursal seleccionada no existe.',
-                'user_id.required' => 'El usuario es obligatorio.',
-                'user_id.exists' => 'El usuario seleccionado no existe.',
-                'fecha_apertura.required' => 'La fecha de apertura es obligatoria.',
-                'fecha_apertura.date' => 'La fecha de apertura debe ser una fecha válida.',
-                'fecha_cierre.date' => 'La fecha de cierre debe ser una fecha válida.',
-                'saldo_inicial.required' => 'El saldo inicial es obligatorio.',
-                'saldo_inicial.numeric' => 'El saldo inicial debe ser un número.',
-                'depositos.numeric' => 'Los depósitos deben ser un número.',
-                'salidas.numeric' => 'Las salidas deben ser un número.',
-                'ventas.numeric' => 'Las ventas deben ser un número.',
-                'ventas_contado.numeric' => 'Las ventas al contado deben ser un número.',
-                'ventas_credito.numeric' => 'Las ventas a crédito deben ser un número.',
-                'pagos_efectivo.numeric' => 'Los pagos en efectivo deben ser un número.',
-                'pagos_qr.numeric' => 'Los pagos QR deben ser un número.',
-                'pagos_transferencia.numeric' => 'Los pagos por transferencia deben ser un número.',
-                'cuotas_ventas_credito.numeric' => 'Las cuotas de ventas a crédito deben ser un número.',
-                'compras_contado.numeric' => 'Las compras al contado deben ser un número.',
-                'compras_credito.numeric' => 'Las compras a crédito deben ser un número.',
-                'saldo_faltante.numeric' => 'El saldo faltante debe ser un número.',
-                'saldo_caja.numeric' => 'El saldo de caja debe ser un número.',
-                'estado.boolean' => 'El estado debe ser verdadero o falso.',
-            ]);
-
             // Validar que no exista una caja abierta para la misma sucursal
             $sucursalId = $request->sucursal_id;
             $estado = $request->estado ?? $request->input('estado');
-            
+
             // Verificar si se está intentando abrir una caja (estado = 1, '1', true, o 'abierta')
-            $isOpeningCaja = $estado === 1 || 
-                            $estado === '1' || 
-                            $estado === true || 
+            $isOpeningCaja = $estado === 1 ||
+                            $estado === '1' ||
+                            $estado === true ||
                             $estado === 'abierta' ||
-                            (is_null($estado) && !$request->has('fecha_cierre')); // Si no tiene fecha_cierre, se considera apertura
-            
+                            (is_null($estado) && ! $request->has('fecha_cierre')); // Si no tiene fecha_cierre, se considera apertura
+
             if ($isOpeningCaja) {
                 // Buscar si ya existe una caja abierta para esta sucursal
                 // Una caja está abierta si:
@@ -149,49 +109,49 @@ class CajaController extends Controller
                 $cajaAbierta = Caja::with('sucursal')
                     ->where('sucursal_id', $sucursalId)
                     ->whereNull('fecha_cierre') // Las cajas cerradas normalmente tienen fecha_cierre
-                    ->where(function($query) {
+                    ->where(function ($query) {
                         // Solo considerar estados que indican caja abierta
                         $query->where('estado', 1)
-                              ->orWhere('estado', '1')
-                              ->orWhere('estado', true)
-                              ->orWhere('estado', 'abierta');
+                            ->orWhere('estado', '1')
+                            ->orWhere('estado', true)
+                            ->orWhere('estado', 'abierta');
                     })
                     // Excluir explícitamente estados que indican caja cerrada
-                    ->where(function($query) {
+                    ->where(function ($query) {
                         $query->where('estado', '!=', 0)
-                              ->where('estado', '!=', '0')
-                              ->where('estado', '!=', false)
-                              ->where('estado', '!=', 'cerrada');
+                            ->where('estado', '!=', '0')
+                            ->where('estado', '!=', false)
+                            ->where('estado', '!=', 'cerrada');
                     })
                     ->first();
-                
+
                 if ($cajaAbierta) {
                     $sucursalNombre = $cajaAbierta->sucursal ? $cajaAbierta->sucursal->nombre : 'esta sucursal';
+
                     return response()->json([
                         'message' => 'Error de validación',
                         'errors' => [
                             'sucursal_id' => [
-                                "Ya existe una caja abierta para {$sucursalNombre}. Por favor, cierre la caja existente antes de abrir una nueva en la misma sucursal."
-                            ]
-                        ]
+                                "Ya existe una caja abierta para {$sucursalNombre}. Por favor, cierre la caja existente antes de abrir una nueva en la misma sucursal.",
+                            ],
+                        ],
                     ], 422);
                 }
             }
 
-            $caja = Caja::create($request->all());
+            $data = $request->except(['user_id']);
+            $data['user_id'] = $request->user()->id;
+            $caja = Caja::create($data);
             $caja->load(['sucursal', 'user']);
 
             return response()->json($caja, 201);
         } catch (\Illuminate\Validation\ValidationException $e) {
             return response()->json([
                 'message' => 'Error de validación',
-                'errors' => $e->errors()
+                'errors' => $e->errors(),
             ], 422);
         } catch (\Exception $e) {
-            return response()->json([
-                'message' => 'Error al crear la caja',
-                'error' => $e->getMessage()
-            ], 500);
+            return ApiError::serverError($e, 'Error al crear la caja', 'CajaController@store');
         }
     }
 
@@ -199,15 +159,17 @@ class CajaController extends Controller
     {
         $caja = Caja::find($id);
 
-        if (!$caja) {
+        if (! $caja) {
             return response()->json([
                 'message' => 'Caja no encontrada',
-                'error' => "No se encontró una caja con el ID: {$id}"
+                'error' => "No se encontró una caja con el ID: {$id}",
             ], 404);
         }
 
+        $this->authorize('view', $caja);
+
         $caja->load(['sucursal', 'user']);
-        
+
         // Calcular saldo disponible
         $saldoInicial = (float) ($caja->saldo_inicial ?? 0);
         $depositos = (float) ($caja->depositos ?? 0);
@@ -220,95 +182,43 @@ class CajaController extends Controller
         $comprasContado = (float) ($caja->compras_contado ?? 0);
         $comprasCredito = (float) ($caja->compras_credito ?? 0);
         $saldoFaltante = (float) ($caja->saldo_faltante ?? 0);
-        
-        $saldoDisponible = $saldoInicial + $depositos + $ventas + $pagosEfectivo + $pagosQr + 
-                          $pagosTransferencia + $cuotasVentasCredito - $salidas - 
+
+        $saldoDisponible = $saldoInicial + $depositos + $ventas + $pagosEfectivo + $pagosQr +
+                          $pagosTransferencia + $cuotasVentasCredito - $salidas -
                           $comprasContado - $comprasCredito - $saldoFaltante;
-        
+
         // Actualizar el saldo_caja en el objeto caja
         $caja->saldo_caja = round($saldoDisponible, 2);
-        
+
         return response()->json($caja);
     }
 
-    public function update(Request $request, $id)
+    public function update(UpdateCajaRequest $request, $caja)
     {
-        $caja = Caja::find($id);
-
-        if (!$caja) {
-            return response()->json([
-                'message' => 'Caja no encontrada',
-                'error' => "No se encontró una caja con el ID: {$id}"
-            ], 404);
-        }
-
-        $request->validate([
-            'sucursal_id' => 'required|exists:sucursales,id',
-            'user_id' => 'required|exists:users,id',
-            'fecha_apertura' => 'required|date',
-            'fecha_cierre' => 'nullable|date',
-            'saldo_inicial' => 'required|numeric',
-            'depositos' => 'nullable|numeric',
-            'salidas' => 'nullable|numeric',
-            'ventas' => 'nullable|numeric',
-            'ventas_contado' => 'nullable|numeric',
-            'ventas_credito' => 'nullable|numeric',
-            'pagos_efectivo' => 'nullable|numeric',
-            'pagos_qr' => 'nullable|numeric',
-            'pagos_transferencia' => 'nullable|numeric',
-            'cuotas_ventas_credito' => 'nullable|numeric',
-            'compras_contado' => 'nullable|numeric',
-            'compras_credito' => 'nullable|numeric',
-            'saldo_faltante' => 'nullable|numeric',
-            'saldo_caja' => 'nullable|numeric',
-            'estado' => 'boolean',
-        ], [
-            'sucursal_id.required' => 'La sucursal es obligatoria.',
-            'sucursal_id.exists' => 'La sucursal seleccionada no existe.',
-            'user_id.required' => 'El usuario es obligatorio.',
-            'user_id.exists' => 'El usuario seleccionado no existe.',
-            'fecha_apertura.required' => 'La fecha de apertura es obligatoria.',
-            'fecha_apertura.date' => 'La fecha de apertura debe ser una fecha válida.',
-            'fecha_cierre.date' => 'La fecha de cierre debe ser una fecha válida.',
-            'saldo_inicial.required' => 'El saldo inicial es obligatorio.',
-            'saldo_inicial.numeric' => 'El saldo inicial debe ser un número.',
-            'depositos.numeric' => 'Los depósitos deben ser un número.',
-            'salidas.numeric' => 'Las salidas deben ser un número.',
-            'ventas.numeric' => 'Las ventas deben ser un número.',
-            'ventas_contado.numeric' => 'Las ventas al contado deben ser un número.',
-            'ventas_credito.numeric' => 'Las ventas a crédito deben ser un número.',
-            'pagos_efectivo.numeric' => 'Los pagos en efectivo deben ser un número.',
-            'pagos_qr.numeric' => 'Los pagos QR deben ser un número.',
-            'pagos_transferencia.numeric' => 'Los pagos por transferencia deben ser un número.',
-            'cuotas_ventas_credito.numeric' => 'Las cuotas de ventas a crédito deben ser un número.',
-            'compras_contado.numeric' => 'Las compras al contado deben ser un número.',
-            'compras_credito.numeric' => 'Las compras a crédito deben ser un número.',
-            'saldo_faltante.numeric' => 'El saldo faltante debe ser un número.',
-            'saldo_caja.numeric' => 'El saldo de caja debe ser un número.',
-            'estado.boolean' => 'El estado debe ser verdadero o falso.',
-        ]);
+        $cajaModel = Caja::findOrFail($caja);
 
         $camposPermitidos = [
-            'sucursal_id', 'user_id', 'fecha_apertura', 'fecha_cierre', 'saldo_inicial',
+            'sucursal_id', 'fecha_apertura', 'fecha_cierre', 'saldo_inicial',
             'depositos', 'salidas', 'ventas', 'ventas_contado', 'ventas_credito',
             'pagos_efectivo', 'pagos_qr', 'pagos_transferencia', 'cuotas_ventas_credito',
-            'compras_contado', 'compras_credito', 'saldo_faltante', 'saldo_caja', 'estado'
+            'compras_contado', 'compras_credito', 'saldo_faltante', 'saldo_caja', 'estado',
         ];
-        $caja->update($request->only($camposPermitidos));
+        $cajaModel->update($request->only($camposPermitidos));
 
-        return response()->json($caja);
+        return response()->json($cajaModel);
     }
 
     /**
      * Calcula los totales de una caja basándose en ventas, compras y transacciones
-     * 
-     * @param int $cajaId ID de la caja
+     *
+     * @param  int  $cajaId  ID de la caja
      * @return array Array con todos los cálculos
      */
     private function calcularTotalesCaja($cajaId)
     {
-        // Obtener ventas de la caja
+        // Totales de caja: solo ventas que aún impactan saldo (no anuladas/canceladas)
         $ventas = \App\Models\Venta::where('caja_id', $cajaId)
+            ->whereNotIn('estado', ['Anulado', 'Cancelada'])
             ->with(['cliente', 'tipoVenta', 'tipoPago'])
             ->get();
 
@@ -323,6 +233,7 @@ class CajaController extends Controller
         // Primero identificar ventas con pago QR (sin importar el tipo de venta)
         $ventasQR = $ventas->filter(function ($v) {
             $tipoPago = $v->tipoPago->nombre_tipo_pago ?? $v->tipoPago->nombre ?? '';
+
             return stripos($tipoPago, 'qr') !== false || stripos($tipoPago, 'qrcode') !== false;
         })->sum('total');
 
@@ -332,6 +243,7 @@ class CajaController extends Controller
             $tipoPago = $v->tipoPago->nombre_tipo_pago ?? $v->tipoPago->nombre ?? '';
             $esContado = stripos($tipoVenta, 'contado') !== false || stripos($tipoVenta, 'efectivo') !== false;
             $noEsQR = stripos($tipoPago, 'qr') === false && stripos($tipoPago, 'qrcode') === false;
+
             return $esContado && $noEsQR;
         })->sum('total');
 
@@ -341,15 +253,16 @@ class CajaController extends Controller
             $tipoPago = $v->tipoPago->nombre_tipo_pago ?? $v->tipoPago->nombre ?? '';
             $esCredito = stripos($tipoVenta, 'credito') !== false || stripos($tipoVenta, 'crédito') !== false;
             $noEsQR = stripos($tipoPago, 'qr') === false && stripos($tipoPago, 'qrcode') === false;
+
             return $esCredito && $noEsQR;
         })->sum('total');
 
         // Calcular compras al contado
-        $comprasContado = $compras->where('tipo_compra', 'CONTADO')->sum('total') + 
+        $comprasContado = $compras->where('tipo_compra', 'CONTADO')->sum('total') +
                          $compras->where('tipo_compra', 'contado')->sum('total');
 
         // Calcular compras a crédito
-        $comprasCredito = $compras->where('tipo_compra', 'CREDITO')->sum('total') + 
+        $comprasCredito = $compras->where('tipo_compra', 'CREDITO')->sum('total') +
                          $compras->where('tipo_compra', 'credito')->sum('total') +
                          $compras->where('tipo_compra', 'CRÉDITO')->sum('total');
 
@@ -374,7 +287,7 @@ class CajaController extends Controller
             'entradas' => round($entradas, 2),
             'salidas' => round($salidas, 2),
             'total_ventas' => round($totalVentas, 2),
-            'total_compras' => round($totalCompras, 2)
+            'total_compras' => round($totalCompras, 2),
         ];
     }
 
@@ -386,12 +299,14 @@ class CajaController extends Controller
     {
         $caja = Caja::with(['sucursal', 'user'])->find($id);
 
-        if (!$caja) {
+        if (! $caja) {
             return response()->json([
                 'message' => 'Caja no encontrada',
-                'error' => "No se encontró una caja con el ID: {$id}"
+                'error' => "No se encontró una caja con el ID: {$id}",
             ], 404);
         }
+
+        $this->authorize('view', $caja);
 
         // Calcular todos los totales en el backend
         $calculado = $this->calcularTotalesCaja($id);
@@ -399,9 +314,9 @@ class CajaController extends Controller
         // Calcular saldo final
         $saldoInicial = (float) ($caja->saldo_inicial ?? 0);
         $saldoFaltante = (float) ($caja->saldo_faltante ?? 0);
-        $saldoFinal = $saldoInicial + $calculado['total_ventas'] + $calculado['entradas'] - 
+        $saldoFinal = $saldoInicial + $calculado['total_ventas'] + $calculado['entradas'] -
                      $calculado['total_compras'] - $calculado['salidas'] - $saldoFaltante;
-        
+
         // Asegurar que el saldo no sea negativo (si es negativo, mostrar 0)
         $saldoFinal = max(0, round($saldoFinal, 2));
         $calculado['saldo_final'] = $saldoFinal;
@@ -425,7 +340,7 @@ class CajaController extends Controller
             'calculado' => $calculado,
             'ventas' => $ventas,
             'compras' => $compras,
-            'transacciones' => $transacciones
+            'transacciones' => $transacciones,
         ]);
     }
 
@@ -434,22 +349,26 @@ class CajaController extends Controller
      */
     public function calcularTotalesCajas(Request $request)
     {
-        $cajas = Caja::with(['sucursal', 'user'])->get();
-        
+        $this->authorize('viewAny', Caja::class);
+        $user = $request->user();
+        $cajas = Caja::with(['sucursal', 'user'])
+            ->forAuthenticatedList($user)
+            ->get();
+
         $cajasConTotales = $cajas->map(function ($caja) {
             $calculado = $this->calcularTotalesCaja($caja->id);
-            
+
             // Calcular saldo final
             $saldoInicial = (float) ($caja->saldo_inicial ?? 0);
             $saldoFaltante = (float) ($caja->saldo_faltante ?? 0);
-            
+
             // Calcular saldo final: saldo inicial + ventas + entradas - compras - salidas - saldo faltante
-            $saldoFinal = $saldoInicial + $calculado['total_ventas'] + $calculado['entradas'] - 
+            $saldoFinal = $saldoInicial + $calculado['total_ventas'] + $calculado['entradas'] -
                          $calculado['total_compras'] - $calculado['salidas'] - $saldoFaltante;
-            
+
             // Asegurar que el saldo no sea negativo (si es negativo, mostrar 0)
             $saldoFinal = max(0, round($saldoFinal, 2));
-            
+
             return [
                 'id' => $caja->id,
                 'saldo_caja' => $saldoFinal,
@@ -461,13 +380,13 @@ class CajaController extends Controller
                 'ventas_credito' => $calculado['ventas_credito'],
                 'ventas_qr' => $calculado['ventas_qr'], // Agregar ventas QR
                 'compras_contado' => $calculado['compras_contado'],
-                'compras_credito' => $calculado['compras_credito']
+                'compras_credito' => $calculado['compras_credito'],
             ];
         });
-        
+
         return response()->json([
             'success' => true,
-            'data' => $cajasConTotales
+            'data' => $cajasConTotales,
         ]);
     }
 
@@ -475,14 +394,17 @@ class CajaController extends Controller
     {
         $caja = Caja::find($id);
 
-        if (!$caja) {
+        if (! $caja) {
             return response()->json([
                 'message' => 'Caja no encontrada',
-                'error' => "No se encontró una caja con el ID: {$id}"
+                'error' => "No se encontró una caja con el ID: {$id}",
             ], 404);
         }
 
+        $this->authorize('delete', $caja);
+
         $caja->delete();
+
         return response()->json(null, 204);
     }
 }

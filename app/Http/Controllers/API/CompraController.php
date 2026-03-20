@@ -4,16 +4,17 @@ namespace App\Http\Controllers\API;
 
 use App\Http\Controllers\Controller;
 use App\Http\Traits\HasPagination;
+use App\Models\Articulo;
+use App\Models\Caja;
 use App\Models\CompraBase;
-use App\Models\DetalleCompra;
 use App\Models\CompraContado;
 use App\Models\CompraCredito;
 use App\Models\CompraCuota;
-use App\Models\Proveedor;
-use App\Models\Articulo;
-use App\Models\Caja;
+use App\Models\DetalleCompra;
 use App\Models\Inventario;
 use App\Models\Kardex;
+use App\Models\Proveedor;
+use App\Support\ApiError;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 
@@ -24,7 +25,10 @@ class CompraController extends Controller
     public function index(Request $request)
     {
         try {
-            $query = CompraBase::with(['proveedor', 'user', 'almacen', 'caja', 'detalles.articulo', 'compraContado', 'compraCredito.cuotas']);
+            $user = $request->user();
+            $this->authorize('viewAny', CompraBase::class);
+            $query = CompraBase::with(['proveedor', 'user', 'almacen', 'caja', 'detalles.articulo', 'compraContado', 'compraCredito.cuotas'])
+                ->forAuthenticatedList($user);
 
             $searchableFields = [
                 'id',
@@ -33,11 +37,11 @@ class CompraController extends Controller
                 'tipo_comprobante',
                 'proveedor.nombre',
                 'proveedor.num_documento',
-                'user.name'
+                'user.name',
             ];
 
             // Filtrar por sucursal si se proporciona
-            if ($request->has('sucursal_id') && !empty($request->sucursal_id)) {
+            if ($request->has('sucursal_id') && ! empty($request->sucursal_id)) {
                 $sucursalId = $request->sucursal_id;
                 $query->whereHas('almacen', function ($q) use ($sucursalId) {
                     $q->where('sucursal_id', $sucursalId);
@@ -53,22 +57,18 @@ class CompraController extends Controller
                 'message' => $e->getMessage(),
                 'file' => $e->getFile(),
                 'line' => $e->getLine(),
-                'trace' => $e->getTraceAsString()
+                'trace' => $e->getTraceAsString(),
             ]);
 
-            return response()->json([
-                'success' => false,
-                'message' => 'Error al cargar las compras',
-                'error' => $e->getMessage()
-            ], 500);
+            return ApiError::serverError($e, 'Error al cargar las compras', 'CompraController@index');
         }
     }
 
     /**
      * Calcula los totales de una compra basándose en los detalles
-     * 
-     * @param array $detalles Array de detalles de compra
-     * @param float $descuentoGlobal Descuento global aplicado
+     *
+     * @param  array  $detalles  Array de detalles de compra
+     * @param  float  $descuentoGlobal  Descuento global aplicado
      * @return array ['subtotal' => float, 'total' => float, 'detalles_calculados' => array]
      */
     private function calcularTotales($detalles, $descuentoGlobal = 0)
@@ -93,7 +93,7 @@ class CompraController extends Controller
                 'cantidad' => $cantidad,
                 'precio_unitario' => $precioUnitario,
                 'descuento' => $descuentoIndividual,
-                'subtotal' => $subtotalDetalle
+                'subtotal' => $subtotalDetalle,
             ];
         }
 
@@ -104,16 +104,16 @@ class CompraController extends Controller
         return [
             'subtotal' => round($subtotal, 2),
             'total' => round($total, 2),
-            'detalles_calculados' => $detallesCalculados
+            'detalles_calculados' => $detallesCalculados,
         ];
     }
 
     public function store(Request $request)
     {
+        $this->authorize('create', CompraBase::class);
         $request->validate([
             'proveedor_id' => 'nullable|exists:proveedores,id',
             'proveedor_nombre' => 'required_without:proveedor_id|string|max:255',
-            'user_id' => 'required|exists:users,id',
             'tipo_comprobante' => 'nullable|string|max:50',
             'serie_comprobante' => 'nullable|string|max:50',
             'num_comprobante' => 'nullable|string|max:50',
@@ -137,48 +137,46 @@ class CompraController extends Controller
         try {
             // Manejar proveedor: crear si no existe
             $proveedorId = $request->proveedor_id;
-            if (!$proveedorId && $request->proveedor_nombre) {
+            if (! $proveedorId && $request->proveedor_nombre) {
                 try {
                     $proveedor = Proveedor::create([
                         'nombre' => trim($request->proveedor_nombre),
-                        'estado' => true
+                        'estado' => true,
                     ]);
                     $proveedorId = $proveedor->id;
                 } catch (\Exception $e) {
                     DB::rollBack();
-                    return response()->json([
-                        'error' => 'Error al crear el proveedor',
-                        'message' => $e->getMessage(),
-                        'file' => $e->getFile(),
-                        'line' => $e->getLine()
-                    ], 500);
+
+                    return ApiError::serverError($e, 'Error al crear el proveedor', 'CompraController@store proveedor');
                 }
             }
 
-            if (!$proveedorId) {
+            if (! $proveedorId) {
                 DB::rollBack();
+
                 return response()->json(['error' => 'No se pudo determinar el proveedor'], 400);
             }
 
             // Calcular totales en el backend
             $descuentoGlobal = (float) ($request->descuento_global ?? 0);
             $resultadoCalculo = $this->calcularTotales($request->detalles, $descuentoGlobal);
-            
+
             // Verificar que $resultadoCalculo sea un array
-            if (!is_array($resultadoCalculo)) {
+            if (! is_array($resultadoCalculo)) {
                 DB::rollBack();
+
                 return response()->json([
                     'error' => 'Error al crear la compra',
-                    'message' => 'Error interno al calcular totales de la compra'
+                    'message' => 'Error interno al calcular totales de la compra',
                 ], 500);
             }
 
             // Preparar datos de la compra
-            $compraData = $request->except(['detalles', 'numero_cuotas', 'monto_pagado', 'proveedor_nombre', 'total']);
+            $compraData = $request->except(['detalles', 'numero_cuotas', 'monto_pagado', 'proveedor_nombre', 'total', 'user_id']);
             $compraData['proveedor_id'] = $proveedorId;
 
             // Asegurar tipos correctos
-            $compraData['user_id'] = (int) $compraData['user_id'];
+            $compraData['user_id'] = $request->user()->id;
             $compraData['almacen_id'] = (int) $compraData['almacen_id'];
             $compraData['total'] = $resultadoCalculo['total']; // Usar el total calculado
             $compraData['descuento_global'] = $descuentoGlobal;
@@ -190,93 +188,97 @@ class CompraController extends Controller
 
             // Asegurar que los campos de comprobante tengan valores por defecto si no se proporcionan
             // Estos campos son requeridos en la base de datos (no nullable)
-            $compraData['tipo_comprobante'] = !empty($compraData['tipo_comprobante']) ? $compraData['tipo_comprobante'] : 'SIN COMPROBANTE';
+            $compraData['tipo_comprobante'] = ! empty($compraData['tipo_comprobante']) ? $compraData['tipo_comprobante'] : 'SIN COMPROBANTE';
             $compraData['serie_comprobante'] = $compraData['serie_comprobante'] ?? null;
-            $compraData['num_comprobante'] = !empty($compraData['num_comprobante']) ? $compraData['num_comprobante'] : '00000000';
+            $compraData['num_comprobante'] = ! empty($compraData['num_comprobante']) ? $compraData['num_comprobante'] : '00000000';
 
             // Validar que haya una caja abierta
-            if (!isset($compraData['caja_id']) || empty($compraData['caja_id'])) {
+            if (! isset($compraData['caja_id']) || empty($compraData['caja_id'])) {
                 // Buscar la caja abierta de la sucursal del almacén seleccionado
                 $almacenId = $compraData['almacen_id'] ?? null;
                 $sucursalId = null;
-                
+
                 if ($almacenId) {
                     // Obtener la sucursal del almacén
                     $almacen = \App\Models\Almacen::find($almacenId);
                     $sucursalId = $almacen ? $almacen->sucursal_id : null;
                 }
-                
+
                 // Construir consulta para buscar caja abierta de la sucursal correcta
-                $queryCaja = Caja::where(function($query) {
+                $queryCaja = Caja::where(function ($query) {
                     $query->where('estado', 1)
-                          ->orWhere('estado', '1')
-                          ->orWhere('estado', true)
-                          ->orWhere('estado', 'abierta');
-                });   
-                
+                        ->orWhere('estado', '1')
+                        ->orWhere('estado', true)
+                        ->orWhere('estado', 'abierta');
+                });
+
                 // Si tenemos sucursal, filtrar por ella
                 if ($sucursalId) {
                     $queryCaja->where('sucursal_id', $sucursalId);
                 }
-                
+
                 $cajaAbierta = $queryCaja->first();
-                
-                if (!$cajaAbierta) {
-                    $mensaje = $sucursalId 
+
+                if (! $cajaAbierta) {
+                    $mensaje = $sucursalId
                         ? 'No hay una caja abierta para la sucursal del almacén seleccionado. Por favor, abra una caja antes de realizar compras.'
                         : 'No hay una caja abierta. Por favor, abra una caja antes de realizar compras.';
-                    
+
                     DB::rollBack();
+
                     return response()->json([
                         'error' => 'Error al crear la compra',
-                        'message' => $mensaje
+                        'message' => $mensaje,
                     ], 400);
                 }
-                
+
                 // Validar que haya suficiente saldo en la caja para la compra
                 $saldoDisponible = $cajaAbierta->calcularSaldoDisponible();
                 // Verificar que $resultadoCalculo sea un array antes de acceder a sus elementos
-                if (!is_array($resultadoCalculo) || !isset($resultadoCalculo['total'])) {
+                if (! is_array($resultadoCalculo) || ! isset($resultadoCalculo['total'])) {
                     DB::rollBack();
+
                     return response()->json([
                         'error' => 'Error al crear la compra',
-                        'message' => 'Error interno al calcular totales de la compra'
+                        'message' => 'Error interno al calcular totales de la compra',
                     ], 500);
                 }
                 $totalCompra = $resultadoCalculo['total'];
-                
+
                 // Determinar el monto a descontar según el tipo de compra
                 $tipoCompraValidacion = strtolower(trim($compraData['tipo_compra'] ?? 'contado'));
                 $montoADescontar = 0;
-                
+
                 if ($tipoCompraValidacion === 'contado') {
                     // Para compras de contado, se descuenta el total completo
                     $montoADescontar = $totalCompra;
-                } else if ($tipoCompraValidacion === 'credito') {
+                } elseif ($tipoCompraValidacion === 'credito') {
                     // Para compras a crédito, solo se descuenta la cuota inicial si existe
                     $montoADescontar = (float) ($compraData['monto_pagado'] ?? 0);
                 }
-                
+
                 // Validar que el saldo sea suficiente para la compra
                 if ($saldoDisponible < $montoADescontar) {
                     DB::rollBack();
+
                     return response()->json([
                         'error' => 'Error al crear la compra',
-                        'message' => 'Saldo insuficiente de caja. Saldo disponible: Bs. ' . number_format($saldoDisponible, 2) . '. Monto requerido: Bs. ' . number_format($montoADescontar, 2)
+                        'message' => 'Saldo insuficiente de caja. Saldo disponible: Bs. '.number_format($saldoDisponible, 2).'. Monto requerido: Bs. '.number_format($montoADescontar, 2),
                     ], 400);
                 }
-                
+
                 $compraData['caja_id'] = $cajaAbierta->id;
             } else {
                 $compraData['caja_id'] = (int) $compraData['caja_id'];
 
                 // Validar que la caja esté abierta
                 $caja = Caja::find($compraData['caja_id']);
-                if (!$caja) {
+                if (! $caja) {
                     DB::rollBack();
+
                     return response()->json([
                         'error' => 'Error al crear la compra',
-                        'message' => 'La caja especificada no existe.'
+                        'message' => 'La caja especificada no existe.',
                     ], 400);
                 }
 
@@ -286,57 +288,61 @@ class CompraController extends Controller
                     $caja->estado === true ||
                     $caja->estado === 'abierta');
 
-                if (!$isCajaOpen) {
+                if (! $isCajaOpen) {
                     DB::rollBack();
+
                     return response()->json([
                         'error' => 'Error al crear la compra',
-                        'message' => 'La caja seleccionada está cerrada. Solo se pueden realizar compras con una caja abierta.'
+                        'message' => 'La caja seleccionada está cerrada. Solo se pueden realizar compras con una caja abierta.',
                     ], 400);
                 }
-                
+
                 // Verificar que la caja pertenezca a la sucursal del almacén seleccionado
                 $almacenId = $compraData['almacen_id'] ?? null;
                 if ($almacenId) {
                     $almacen = \App\Models\Almacen::find($almacenId);
                     if ($almacen && $caja->sucursal_id != $almacen->sucursal_id) {
                         DB::rollBack();
+
                         return response()->json([
                             'error' => 'Error al crear la compra',
-                            'message' => 'La caja seleccionada no pertenece a la sucursal del almacén elegido. Por favor, seleccione el almacén correcto o use una caja de la misma sucursal.'
+                            'message' => 'La caja seleccionada no pertenece a la sucursal del almacén elegido. Por favor, seleccione el almacén correcto o use una caja de la misma sucursal.',
                         ], 400);
                     }
                 }
-                
+
                 // Validar que haya suficiente saldo en la caja para la compra
                 $saldoDisponible = $caja->calcularSaldoDisponible();
                 // Verificar que $resultadoCalculo sea un array antes de acceder a sus elementos
-                if (!is_array($resultadoCalculo) || !isset($resultadoCalculo['total'])) {
+                if (! is_array($resultadoCalculo) || ! isset($resultadoCalculo['total'])) {
                     DB::rollBack();
+
                     return response()->json([
                         'error' => 'Error al crear la compra',
-                        'message' => 'Error interno al calcular totales de la compra'
+                        'message' => 'Error interno al calcular totales de la compra',
                     ], 500);
                 }
                 $totalCompra = $resultadoCalculo['total'];
-                
+
                 // Determinar el monto a descontar según el tipo de compra
                 $tipoCompraValidacion = strtolower(trim($compraData['tipo_compra'] ?? 'contado'));
                 $montoADescontar = 0;
-                
+
                 if ($tipoCompraValidacion === 'contado') {
                     // Para compras de contado, se descuenta el total completo
                     $montoADescontar = $totalCompra;
-                } else if ($tipoCompraValidacion === 'credito') {
+                } elseif ($tipoCompraValidacion === 'credito') {
                     // Para compras a crédito, solo se descuenta la cuota inicial si existe
                     $montoADescontar = (float) ($compraData['monto_pagado'] ?? 0);
                 }
-                
+
                 // Validar que el saldo sea suficiente para la compra
                 if ($saldoDisponible < $montoADescontar) {
                     DB::rollBack();
+
                     return response()->json([
                         'error' => 'Error al crear la compra',
-                        'message' => 'Saldo insuficiente de caja. Saldo disponible: Bs. ' . number_format($saldoDisponible, 2) . '. Monto requerido: Bs. ' . number_format($montoADescontar, 2)
+                        'message' => 'Saldo insuficiente de caja. Saldo disponible: Bs. '.number_format($saldoDisponible, 2).'. Monto requerido: Bs. '.number_format($montoADescontar, 2),
                     ], 400);
                 }
             }
@@ -355,8 +361,9 @@ class CompraController extends Controller
 
             // Crear detalles usando los valores calculados
             foreach ($resultadoCalculo['detalles_calculados'] as $index => $detalle) {
-                if (!isset($detalle['articulo_id']) || !isset($detalle['cantidad'])) {
+                if (! isset($detalle['articulo_id']) || ! isset($detalle['cantidad'])) {
                     \Log::warning('Detalle sin articulo_id o cantidad', ['detalle' => $detalle, 'index' => $index]);
+
                     continue;
                 }
 
@@ -364,18 +371,19 @@ class CompraController extends Controller
 
                 // Verificar que el artículo existe
                 $articulo = Articulo::find($articuloId);
-                if (!$articulo) {
+                if (! $articulo) {
                     \Log::error('Artículo no encontrado', [
                         'articulo_id' => $articuloId,
                         'detalle' => $detalle,
-                        'compra_base_id' => $compraBase->id
+                        'compra_base_id' => $compraBase->id,
                     ]);
                     DB::rollBack();
+
                     return response()->json([
                         'error' => 'Error al crear la compra',
                         'message' => "El artículo con ID {$articuloId} no existe en la base de datos.",
                         'detalle_index' => $index,
-                        'articulo_id' => $articuloId
+                        'articulo_id' => $articuloId,
                     ], 400);
                 }
 
@@ -395,7 +403,7 @@ class CompraController extends Controller
                     'compra_base_id' => $compraBase->id,
                     'articulo_id' => $articuloId,
                     'almacen_id' => $almacenId,
-                    'cantidad' => $cantidadComprada
+                    'cantidad' => $cantidadComprada,
                 ]);
 
                 // Buscar o crear registro de inventario para este almacén y artículo
@@ -416,7 +424,7 @@ class CompraController extends Controller
                         'cantidad_anterior' => $cantidadAnterior,
                         'cantidad_nueva' => $inventario->cantidad,
                         'saldo_anterior' => $saldoAnterior,
-                        'saldo_nuevo' => $inventario->saldo_stock
+                        'saldo_nuevo' => $inventario->saldo_stock,
                     ]);
                 } else {
                     // Si no existe, crear nuevo registro
@@ -432,7 +440,7 @@ class CompraController extends Controller
                         'inventario_id' => $nuevoInventario->id,
                         'almacen_id' => $almacenId,
                         'articulo_id' => $articuloId,
-                        'cantidad' => $cantidadComprada
+                        'cantidad' => $cantidadComprada,
                     ]);
                 }
 
@@ -444,7 +452,7 @@ class CompraController extends Controller
                 \Log::info('Stock del artículo actualizado', [
                     'articulo_id' => $articuloId,
                     'stock_anterior' => $stockAnterior,
-                    'stock_nuevo' => $articulo->stock
+                    'stock_nuevo' => $articulo->stock,
                 ]);
 
                 // Registrar movimiento en Kardex
@@ -471,20 +479,20 @@ class CompraController extends Controller
                         'cantidad_saldo' => $saldoKardex,
                         'costo_unitario' => $costoUnitario,
                         'costo_total' => $cantidadComprada * $costoUnitario,
-                        'observaciones' => 'Compra ' . $compraData['tipo_comprobante'] . ' ' . $compraData['num_comprobante'],
+                        'observaciones' => 'Compra '.$compraData['tipo_comprobante'].' '.$compraData['num_comprobante'],
                         'usuario_id' => $compraData['user_id'],
-                        'compra_id' => $compraBase->id
+                        'compra_id' => $compraBase->id,
                     ]);
 
                     \Log::info('Kardex registrado para compra', [
                         'articulo_id' => $articuloId,
                         'cantidad' => $cantidadComprada,
-                        'saldo' => $saldoKardex
+                        'saldo' => $saldoKardex,
                     ]);
                 } catch (\Exception $e) {
                     \Log::error('Error al registrar Kardex en compra', [
                         'articulo_id' => $articuloId,
-                        'error' => $e->getMessage()
+                        'error' => $e->getMessage(),
                     ]);
                     // No detener la transacción por error en kardex
                 }
@@ -511,15 +519,16 @@ class CompraController extends Controller
                     'numero_cuotas_convertido' => $numCuotas,
                     'monto_pagado_request' => $request->monto_pagado,
                     'monto_pagado_convertido' => $cuotaInicial,
-                    'tipo_compra' => $tipoCompra
+                    'tipo_compra' => $tipoCompra,
                 ]);
 
                 // Validar que numero_cuotas sea válido
                 if ($numCuotas < 1) {
                     DB::rollBack();
+
                     return response()->json([
                         'success' => false,
-                        'message' => 'El número de cuotas debe ser mayor a 0'
+                        'message' => 'El número de cuotas debe ser mayor a 0',
                     ], 400);
                 }
 
@@ -544,7 +553,7 @@ class CompraController extends Controller
                     'total_compra' => $totalCompra,
                     'cuota_inicial' => $cuotaInicial,
                     'saldo_pendiente' => $saldoPendiente,
-                    'num_cuotas' => $numCuotas
+                    'num_cuotas' => $numCuotas,
                 ]);
 
                 // Solo crear cuotas si hay saldo pendiente
@@ -559,7 +568,7 @@ class CompraController extends Controller
                     \Log::info('Iniciando creación de cuotas', [
                         'monto_por_cuota' => $montoPorCuota,
                         'fecha_base' => $fechaBase->format('Y-m-d'),
-                        'frecuencia_dias' => $frecuenciaDias
+                        'frecuencia_dias' => $frecuenciaDias,
                     ]);
 
                     for ($i = 1; $i <= $numCuotas; $i++) {
@@ -591,7 +600,7 @@ class CompraController extends Controller
                             'cuota_id' => $cuotaCreada->id,
                             'numero_cuota' => $i,
                             'monto_cuota' => $montoCuota,
-                            'fecha_vencimiento' => $fechaVencimiento->format('Y-m-d')
+                            'fecha_vencimiento' => $fechaVencimiento->format('Y-m-d'),
                         ]);
                     }
 
@@ -603,13 +612,13 @@ class CompraController extends Controller
                         'saldo_pendiente' => $saldoPendiente,
                         'monto_por_cuota' => $montoPorCuota,
                         'total_cuotas_creadas' => $totalCuotasCreadas,
-                        'diferencia' => abs($saldoPendiente - $totalCuotasCreadas)
+                        'diferencia' => abs($saldoPendiente - $totalCuotasCreadas),
                     ]);
                 } else {
                     \Log::info('No se crearon cuotas - saldo pendiente es 0 o número de cuotas es 0', [
                         'compra_credito_id' => $compraCredito->id,
                         'saldo_pendiente' => $saldoPendiente,
-                        'num_cuotas' => $numCuotas
+                        'num_cuotas' => $numCuotas,
                     ]);
                 }
             }
@@ -629,7 +638,7 @@ class CompraController extends Controller
                             'tipo_compra' => $tipoCompra,
                             'tipo_compra_original' => $compraBase->tipo_compra,
                             'compras_contado_antes' => $caja->compras_contado,
-                            'compras_credito_antes' => $caja->compras_credito
+                            'compras_credito_antes' => $caja->compras_credito,
                         ]);
 
                         // Actualizar compras por tipo (contado o crédito) usando increment para evitar problemas de concurrencia
@@ -646,7 +655,7 @@ class CompraController extends Controller
                             \Log::info('Actualizado compras_contado', [
                                 'valor_anterior' => $valorAnterior,
                                 'total_compra' => $totalCompra,
-                                'nuevo_valor' => $caja->compras_contado
+                                'nuevo_valor' => $caja->compras_contado,
                             ]);
                         } elseif ($tipoCompra === 'CREDITO' || $tipoCompra === 'CRÉDITO') {
                             $valorAnterior = (float) ($caja->compras_credito ?? 0);
@@ -661,28 +670,28 @@ class CompraController extends Controller
                             \Log::info('Actualizado compras_credito', [
                                 'valor_anterior' => $valorAnterior,
                                 'total_compra' => $totalCompra,
-                                'nuevo_valor' => $caja->compras_credito
+                                'nuevo_valor' => $caja->compras_credito,
                             ]);
                         } else {
                             \Log::warning('Tipo de compra no reconocido', [
                                 'tipo_compra' => $tipoCompra,
-                                'tipo_compra_original' => $compraBase->tipo_compra
+                                'tipo_compra_original' => $compraBase->tipo_compra,
                             ]);
                         }
 
                         \Log::info('Caja actualizada después de compra', [
                             'compras_contado_despues' => $caja->compras_contado,
-                            'compras_credito_despues' => $caja->compras_credito
+                            'compras_credito_despues' => $caja->compras_credito,
                         ]);
                     } else {
                         \Log::warning('Caja no encontrada para actualizar', [
                             'caja_id' => $compraBase->caja_id,
-                            'compra_id' => $compraBase->id
+                            'compra_id' => $compraBase->id,
                         ]);
                     }
                 } else {
                     \Log::warning('Compra sin caja_id', [
-                        'compra_id' => $compraBase->id
+                        'compra_id' => $compraBase->id,
                     ]);
                 }
             } catch (\Exception $e) {
@@ -691,41 +700,34 @@ class CompraController extends Controller
                     'caja_id' => $compraBase->caja_id ?? null,
                     'error' => $e->getMessage(),
                     'file' => $e->getFile(),
-                    'line' => $e->getLine()
+                    'line' => $e->getLine(),
                 ]);
                 // No lanzar excepción para no romper la transacción de la compra
             }
 
             DB::commit();
             $compraBase->load(['detalles.articulo', 'proveedor', 'user', 'almacen', 'caja', 'compraContado', 'compraCredito.cuotas']);
+
             return response()->json([
                 'success' => true,
                 'message' => 'Compra creada exitosamente',
-                'data' => $compraBase
+                'data' => $compraBase,
             ], 201);
         } catch (\Exception $e) {
             DB::rollBack();
-            \Log::error('Error al crear compra', [
-                'message' => $e->getMessage(),
-                'file' => $e->getFile(),
-                'line' => $e->getLine(),
-                'trace' => $e->getTraceAsString()
-            ]);
-            return response()->json([
-                'error' => 'Error al crear la compra',
-                'message' => $e->getMessage(),
-                'file' => basename($e->getFile()),
-                'line' => $e->getLine()
-            ], 500);
+
+            return ApiError::serverError($e, 'Error al crear la compra', 'CompraController@store');
         }
     }
 
     public function show(CompraBase $compra)
     {
+        $this->authorize('view', $compra);
         $compra->load(['proveedor', 'user', 'almacen', 'caja', 'detalles.articulo', 'compraContado', 'compraCredito']);
+
         return response()->json([
             'success' => true,
-            'data' => $compra
+            'data' => $compra,
         ]);
     }
 
@@ -734,17 +736,18 @@ class CompraController extends Controller
         // Buscar la compra manualmente
         $compra = CompraBase::find($id);
 
-        if (!$compra) {
+        if (! $compra) {
             return response()->json([
                 'error' => 'Compra no encontrada',
-                'message' => "No se encontró una compra con ID {$id}"
+                'message' => "No se encontró una compra con ID {$id}",
             ], 404);
         }
+
+        $this->authorize('update', $compra);
 
         $request->validate([
             'proveedor_id' => 'nullable|exists:proveedores,id',
             'proveedor_nombre' => 'required_without:proveedor_id|string|max:255',
-            'user_id' => 'required|exists:users,id',
             'tipo_comprobante' => 'nullable|string|max:50',
             'serie_comprobante' => 'nullable|string|max:50',
             'num_comprobante' => 'nullable|string|max:50',
@@ -765,26 +768,23 @@ class CompraController extends Controller
         try {
             // Manejar proveedor: crear si no existe
             $proveedorId = $request->proveedor_id;
-            if (!$proveedorId && $request->proveedor_nombre) {
+            if (! $proveedorId && $request->proveedor_nombre) {
                 try {
                     $proveedor = Proveedor::create([
                         'nombre' => trim($request->proveedor_nombre),
-                        'estado' => true
+                        'estado' => true,
                     ]);
                     $proveedorId = $proveedor->id;
                 } catch (\Exception $e) {
                     DB::rollBack();
-                    return response()->json([
-                        'error' => 'Error al crear el proveedor',
-                        'message' => $e->getMessage(),
-                        'file' => $e->getFile(),
-                        'line' => $e->getLine()
-                    ], 500);
+
+                    return ApiError::serverError($e, 'Error al crear el proveedor', 'CompraController@update proveedor');
                 }
             }
 
-            if (!$proveedorId) {
+            if (! $proveedorId) {
                 DB::rollBack();
+
                 return response()->json(['error' => 'No se pudo determinar el proveedor'], 400);
             }
 
@@ -801,12 +801,11 @@ class CompraController extends Controller
 
             $resultadoCalculo = $this->calcularTotales($detallesParaCalcular, $descuentoGlobal);
 
-            // Preparar datos de la compra
-            $compraData = $request->except(['detalles', 'proveedor_nombre', 'total']);
+            // Preparar datos de la compra (no permitir cambiar user_id desde el cliente)
+            $compraData = $request->except(['detalles', 'proveedor_nombre', 'total', 'user_id']);
             $compraData['proveedor_id'] = $proveedorId;
 
             // Asegurar tipos correctos
-            $compraData['user_id'] = (int) $compraData['user_id'];
             $compraData['almacen_id'] = (int) $compraData['almacen_id'];
             $compraData['total'] = $resultadoCalculo['total']; // Usar el total calculado
             $compraData['descuento_global'] = $descuentoGlobal;
@@ -865,10 +864,11 @@ class CompraController extends Controller
             DetalleCompra::where('compra_base_id', $compraId)->delete();
 
             // Crear nuevos detalles usando los valores calculados
-            if (!empty($resultadoCalculo['detalles_calculados'])) {
+            if (! empty($resultadoCalculo['detalles_calculados'])) {
                 foreach ($resultadoCalculo['detalles_calculados'] as $index => $detalle) {
-                    if (!isset($detalle['articulo_id']) || !isset($detalle['cantidad'])) {
+                    if (! isset($detalle['articulo_id']) || ! isset($detalle['cantidad'])) {
                         \Log::warning('Detalle sin articulo_id o cantidad', ['detalle' => $detalle, 'index' => $index]);
+
                         continue;
                     }
 
@@ -876,18 +876,19 @@ class CompraController extends Controller
 
                     // Verificar que el artículo existe
                     $articulo = Articulo::find($articuloId);
-                    if (!$articulo) {
+                    if (! $articulo) {
                         \Log::error('Artículo no encontrado', [
                             'articulo_id' => $articuloId,
                             'detalle' => $detalle,
-                            'compra_base_id' => $compraId
+                            'compra_base_id' => $compraId,
                         ]);
                         DB::rollBack();
+
                         return response()->json([
                             'error' => 'Error al actualizar la compra',
                             'message' => "El artículo con ID {$articuloId} no existe en la base de datos.",
                             'detalle_index' => $index,
-                            'articulo_id' => $articuloId
+                            'articulo_id' => $articuloId,
                         ], 400);
                     }
 
@@ -963,26 +964,18 @@ class CompraController extends Controller
 
             DB::commit();
             $compra->load('detalles');
+
             return response()->json($compra);
         } catch (\Exception $e) {
             DB::rollBack();
-            \Log::error('Error al actualizar compra', [
-                'message' => $e->getMessage(),
-                'file' => $e->getFile(),
-                'line' => $e->getLine(),
-                'trace' => $e->getTraceAsString()
-            ]);
-            return response()->json([
-                'error' => 'Error al actualizar la compra',
-                'message' => $e->getMessage(),
-                'file' => basename($e->getFile()),
-                'line' => $e->getLine()
-            ], 500);
+
+            return ApiError::serverError($e, 'Error al actualizar la compra', 'CompraController@update');
         }
     }
 
     public function destroy(CompraBase $compra)
     {
+        $this->authorize('delete', $compra);
         DB::beginTransaction();
         try {
             // Obtener detalles de la compra antes de eliminarla
@@ -1041,18 +1034,12 @@ class CompraController extends Controller
 
             $compra->delete();
             DB::commit();
+
             return response()->json(null, 204);
         } catch (\Exception $e) {
             DB::rollBack();
-            \Log::error('Error al eliminar compra', [
-                'message' => $e->getMessage(),
-                'file' => $e->getFile(),
-                'line' => $e->getLine()
-            ]);
-            return response()->json([
-                'error' => 'Error al eliminar la compra',
-                'message' => $e->getMessage()
-            ], 500);
+
+            return ApiError::serverError($e, 'Error al eliminar la compra', 'CompraController@destroy');
         }
     }
 }

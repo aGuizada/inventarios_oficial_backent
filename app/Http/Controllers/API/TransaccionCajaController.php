@@ -3,8 +3,8 @@
 namespace App\Http\Controllers\API;
 
 use App\Http\Controllers\Controller;
-use App\Models\TransaccionCaja;
 use App\Models\Caja;
+use App\Models\TransaccionCaja;
 use Illuminate\Http\Request;
 
 class TransaccionCajaController extends Controller
@@ -12,6 +12,7 @@ class TransaccionCajaController extends Controller
     public function index()
     {
         $transacciones = TransaccionCaja::with(['caja', 'user'])->get();
+
         return response()->json(['data' => $transacciones]);
     }
 
@@ -20,6 +21,7 @@ class TransaccionCajaController extends Controller
         $transacciones = TransaccionCaja::where('caja_id', $cajaId)
             ->with(['caja', 'user'])
             ->get();
+
         return response()->json(['data' => $transacciones]);
     }
 
@@ -27,7 +29,6 @@ class TransaccionCajaController extends Controller
     {
         $request->validate([
             'caja_id' => 'required|exists:cajas,id',
-            'user_id' => 'required|exists:users,id',
             'fecha' => 'required|date',
             'transaccion' => 'required|string|max:50',
             'importe' => 'required|numeric',
@@ -35,7 +36,9 @@ class TransaccionCajaController extends Controller
             'referencia' => 'nullable|string|max:100',
         ]);
 
-        $transaccion = TransaccionCaja::create($request->all());
+        $data = $request->except(['user_id']);
+        $data['user_id'] = $request->user()->id;
+        $transaccion = TransaccionCaja::create($data);
 
         // Actualizar los campos depositos o salidas en la caja
         $caja = Caja::find($request->caja_id);
@@ -56,6 +59,7 @@ class TransaccionCajaController extends Controller
     public function show(TransaccionCaja $transaccionCaja)
     {
         $transaccionCaja->load(['caja', 'user']);
+
         return response()->json(['data' => $transaccionCaja]);
     }
 
@@ -63,7 +67,6 @@ class TransaccionCajaController extends Controller
     {
         $request->validate([
             'caja_id' => 'required|exists:cajas,id',
-            'user_id' => 'required|exists:users,id',
             'fecha' => 'required|date',
             'transaccion' => 'required|string|max:50',
             'importe' => 'required|numeric',
@@ -76,7 +79,8 @@ class TransaccionCajaController extends Controller
         $transaccionAnterior = $transaccionCaja->transaccion;
         $cajaIdAnterior = $transaccionCaja->caja_id;
 
-        $transaccionCaja->update($request->all());
+        $data = $request->except(['user_id']);
+        $transaccionCaja->update($data);
 
         // Revertir el cambio anterior en la caja
         $cajaAnterior = Caja::find($cajaIdAnterior);
@@ -117,6 +121,7 @@ class TransaccionCajaController extends Controller
         }
 
         $transaccionCaja->delete();
+
         return response()->json(null, 204);
     }
 }
